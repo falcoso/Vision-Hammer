@@ -1,0 +1,50 @@
+10/10/19 - First Supervision
+
+  First meeting with Joan. Discussed initial Risk assessment. Games workshop are
+  unable to provide CAD models for training, but JL will contact Hugo in the
+  dept who has been working on voxel carving to potentially scan in models. Need
+  to bring in models next week to show, as well as start making some cardboard
+  models of scenery to work with.
+
+  Further work:
+  python-pcl may be a useful point cloud library. Look into registration using
+  ICP in the open3d library. A lot of mention of mixture of gaussians.
+
+11/10/19 - Cameras
+
+  Prices of the Realsense can vary upwards of £150, although a second hand
+  v2 Kinect can go for as little as £40, comparisons online show less resolution
+  with the kinect but much fewer noise artifacts and therefore a clearer point
+  cloud image.
+
+  Kinect v2: 0.5m-4.5m
+  RealSense: 0.2-1.2m
+
+15/10/19
+
+Created a set of several related point clouds to try registering with open3d.
+  Global method uses RASNAC and then refines to a more accurate registration
+  with ICP. However, matching doesn't seem very good out the box even with what
+  appears to be very similar clouds.
+
+  Created CAD model for a building that can be laser cut to start creating a
+  board top from which to produce LOS.
+
+18/10/19 - Registration works!
+
+  https://towardsdatascience.com/point-cloud-data-simple-approach-f3855fdc08f5
+  Created some cleaner point clouds which are simply models on a table with
+  blinds in the background. This makes registration a much simpler task. Also
+  looked at Colored Point Cloud Registration Revisited which makes use of the
+  fact that we have a colour image to overlay. Now need to look into how I can
+  automatically clean up the data by removing outliers.
+
+  Have done some reading on further registration techniques, the mention of GMM
+  models basically involves clustering GMMs at different levels of hierarchy.
+  The mean of each cluster tells you its location and the variance matrix give
+  the shape i.e. an eigenvalue close to 0 means that the cluster is likely a
+  plane.
+
+  Created a simple script that tries to bin the most common normals in a scene.
+  Doesn't actually produce perfect normals to the large planes in the point
+  clouds but, may be useful as a finger print to work out initial rotations.
