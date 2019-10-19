@@ -2,3 +2,4 @@ __pycache__
 Reading/*
 registration.py
 Building model/*
+*.npy
