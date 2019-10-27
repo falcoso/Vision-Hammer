@@ -96,10 +96,69 @@ def register_clouds(target, source):
                     o3d.geometry.KDTreeSearchParamHybrid(radius=radius * 2,
                                                          max_nn=30))
 
-
         result_icp = o3d.registration.registration_colored_icp(
             source_down, target_down, radius, current_transformation,
             o3d.registration.ICPConvergenceCriteria(relative_fitness=1e-6,
                                                     relative_rmse=1e-6,
                                                     max_iteration=iter))
         return result_icp.transformation
+
+
+def clean_cloud(pcd_fp, std_ratio=1, nb_neighbors=20, view=False, pcd_sl=None):
+    """Cleans a point supplied point cloud of statistical outliers.
+
+    Parameters
+    ----------
+    pcd_fp : str/ open3d.geometry.PointCloud
+        File path to point cloud data or already opened point cloud data.
+    std_ratio : float (1.0)
+        Standard Ratio for statistical outlier removal
+    nb_neighbors : int (20)
+        Number of nearest neighbours to consider.
+    view : bool (False)
+        If True the point cloud will be visualised with outliers highlighted.
+    pcd_sl : str (None)
+        File path of where to save the cleaned cloud. If None, the cloud is not
+        saved.
+
+    Returns
+    -------
+    cl : open3d.geometry.PointCloud
+        Cleaned point cloud
+    ind : numpy.array (int)
+        Indexes in original cloud of
+    """
+
+    if type(pcd_fp) == str:
+        pcd = o3d.io.read_point_cloud(pcd_fp)
+    else:
+        pcd = pcd_fp
+
+    cl, ind = pcd.remove_statistical_outlier(nb_neighbors=20,
+                                             std_ratio=1)
+    if view:
+        display_inlier_outlier(pcd, ind)
+
+    if pcd_sl is not None:
+        o3d.io.write_point_cloud(pcd_sl, cl)
+
+    return cl, ind
+
+
+def display_inlier_outlier(cloud, ind):
+    """Displays the point cloud with points of index in ind highlighted red
+
+    Parameters
+    ----------
+    cloud : open3d.geometry.PointCloud
+        Description of parameter `cloud`.
+    ind : numpy.array (int)
+        Indexes in original cloud of
+    """
+    inlier_cloud = cloud.select_down_sample(ind)
+    outlier_cloud = cloud.select_down_sample(ind, invert=True)
+
+    outlier_cloud.paint_uniform_color([1, 0, 0])
+    inlier_cloud.paint_uniform_color([0.8, 0.8, 0.8])
+    o3d.visualization.draw_geometries([inlier_cloud, outlier_cloud])
+    return

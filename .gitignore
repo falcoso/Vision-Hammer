@@ -3,3 +3,4 @@ Reading/*
 registration.py
 Building model/*
 *.npy
+.ipynb_checkpoints

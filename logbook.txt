@@ -48,3 +48,15 @@ Created a set of several related point clouds to try registering with open3d.
   Created a simple script that tries to bin the most common normals in a scene.
   Doesn't actually produce perfect normals to the large planes in the point
   clouds but, may be useful as a finger print to work out initial rotations.
+
+23/10/19 - Isolating models
+  Demonstrated current matching. discussed once models have been isolated
+  looking at PCA of each model to get a unique signature. Other matching
+  criteria might be volume, and elevation of centre of mass from the ground. 
+
+  TODO:
+  Make a set of images RGB with depth info and will look at voxel carving, try
+  matching the clouds together to get an isolated mesh of each model, Hugo
+  will also look into the dataset to see what he can do with them.
+  Clear out planes, and try matching the point clouds with just the structure
+  of the miniatures remaining.
