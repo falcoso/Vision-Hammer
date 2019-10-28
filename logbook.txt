@@ -52,7 +52,7 @@ Created a set of several related point clouds to try registering with open3d.
 23/10/19 - Isolating models
   Demonstrated current matching. discussed once models have been isolated
   looking at PCA of each model to get a unique signature. Other matching
-  criteria might be volume, and elevation of centre of mass from the ground. 
+  criteria might be volume, and elevation of centre of mass from the ground.
 
   TODO:
   Make a set of images RGB with depth info and will look at voxel carving, try
@@ -60,3 +60,8 @@ Created a set of several related point clouds to try registering with open3d.
   will also look into the dataset to see what he can do with them.
   Clear out planes, and try matching the point clouds with just the structure
   of the miniatures remaining.
+
+28/10/19 - Isolating Planes
+  Successfully implemented a region growing algorithm and have been able to
+  isolate planes. Created ipython notebook to make displaying segments of code
+  much easier.
