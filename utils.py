@@ -1,5 +1,6 @@
 import open3d as o3d
 import numpy as np
+import random
 
 
 def hist_normals(pcd, bin_size=0.95):
@@ -96,7 +97,8 @@ def register_clouds(target, source):
 
 
 def clean_cloud(pcd_fp, std_ratio=1, nb_neighbors=20, view=False, pcd_sl=None):
-    """Cleans a point supplied point cloud of statistical outliers.
+    """
+    Cleans a point supplied point cloud of statistical outliers.
 
     Parameters
     ----------
@@ -140,14 +142,15 @@ def clean_cloud(pcd_fp, std_ratio=1, nb_neighbors=20, view=False, pcd_sl=None):
 
 
 def display_inlier_outlier(cloud, ind):
-    """Displays the point cloud with points of index in ind highlighted red
+    """
+    Displays the point cloud with points of index in ind highlighted red
 
     Parameters
     ----------
     cloud : open3d.geometry.PointCloud
-        Description of parameter `cloud`.
+        cloud from which outliers have been found
     ind : numpy.array (int)
-        Indexes in original cloud of
+        Indexes in original cloud of outliers
     """
     inlier_cloud = cloud.select_down_sample(ind)
     outlier_cloud = cloud.select_down_sample(ind, invert=True)
@@ -159,7 +162,8 @@ def display_inlier_outlier(cloud, ind):
 
 
 def create_vector_graph(vectors):
-    """Creats a Line Geometry of the supplied vectors coming from the origin.
+    """
+    Creats a Line Geometry of the supplied vectors coming from the origin.
 
     Parameters
     ----------
@@ -170,7 +174,6 @@ def create_vector_graph(vectors):
     -------
     line_set : o3d.geometry.LineSet()
         Geometry of vectors to be displayed
-
     """
     # create points with 0 vector
     points = np.append(np.zeros((1, 3)), vectors, axis=0)
@@ -182,6 +185,71 @@ def create_vector_graph(vectors):
     line_set.points = o3d.utility.Vector3dVector(points)
     line_set.lines = o3d.utility.Vector2iVector(lines)
     return line_set
+
+
+def region_grow(pcd, tol=0.95, find_planes=False):
+    """
+    Segments point cloud using a region growing algorithm
+
+    Parameters
+    ----------
+    pcd : open3d.geometry.PointCloud
+        Point Cloud to segment
+    tol : float (0.95)
+        Value between 0 and 1 for how sensitive to curvature the region growing
+        should be
+    find_planes : bool (False)
+        If True, the region will segment trying to find planes in the model.
+
+    Returns
+    -------
+    planes_list : list of np.array(int)
+        List of arrays containing the indicies for all points in the segement
+        from the point cloud.
+    """
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    if not pcd.has_normals():
+        pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.04 * 2,
+                                                                  max_nn=30))
+
+    # create list of indicies to match
+    ind = list(range(np.asarray(pcd.points).shape[0]))
+    planes_list = []
+
+    while len(ind) > 0:
+        start_point = ind.pop()
+        # find it's nearest neighbour
+        # k is number of nearest neighbours, idx is index in list _ is the distances
+        seeds = {start_point}
+        plane = {start_point}
+        normals = np.asarray(pcd.normals)
+        match_normal = normals[start_point]
+        counter = 0  # counter to re-align the vector
+        while seeds != set():
+
+            # get next point
+            seed = seeds.pop()
+            if not find_planes:
+                match_normal = normals[seed]
+            [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[seed], 30)
+            match = np.abs(normals.dot(match_normal))
+            plane_addition = {i for i in idx if match[i] > tol}
+            seed_addition = {i for i in plane_addition if i not in plane}
+            seeds.update(seed_addition)
+            plane.update(plane_addition)
+
+            counter += 1
+            counter %= 100
+            if counter == 0 and find_planes:
+                plane_points = np.asarray(pcd.select_down_sample(np.array(list(plane))).points)
+                pseudoinverse = np.linalg.pinv(plane_points.T)
+                match_normal = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
+                match_normal /= np.linalg.norm(match_normal)
+
+        planes_list.append(np.array(list(plane), dtype=int))
+        ind = [i for i in ind if i not in plane]
+
+    return planes_list
 
 
 if __name__ == "__main__":
