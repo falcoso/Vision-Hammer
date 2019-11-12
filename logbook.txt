@@ -65,3 +65,21 @@ Created a set of several related point clouds to try registering with open3d.
   Successfully implemented a region growing algorithm and have been able to
   isolate planes. Created ipython notebook to make displaying segments of code
   much easier.
+
+6/11/19
+  Over the last week have created data set for each model to be stitched
+  together as well as additional images of the board states. After cleaning up
+  the individual models, removing all the background and scatter etc. (which
+  works remarkably well!) the point cloud registration is very poor, and in fact
+  makes the alignment worse. I have begun looking at a potential new algorithm
+  that treats colour as extra spacial dimensions for working out correspondence.
+  Have also considered forcing a large known plane into the point cloud to help
+  anchor the cloud.
+
+  bi-vector
+
+  cost function base on point normals
+
+  cut out all but legs
+
+  nerbs

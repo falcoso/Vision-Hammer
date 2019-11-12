@@ -1,6 +1,6 @@
 import open3d as o3d
 import numpy as np
-import random
+import colorsys
 
 
 def hist_normals(pcd, bin_size=0.95):
@@ -47,7 +47,7 @@ def hist_normals(pcd, bin_size=0.95):
     return vec_list
 
 
-def register_clouds(target, source):
+def register_clouds(target, source, voxel_radius=[0.04, 0.02, 0.01] , max_iter=[50, 30, 14]):
     """
     Colored pointcloud registration
     This is implementation of following paper
@@ -62,6 +62,12 @@ def register_clouds(target, source):
     source: open3d.geometry.PointCloud
         Point cloud to which transformation will be applied for aligning.
 
+    voxel_radius: iterable of floats
+        List of voxel radii to down sample for each round of iteration
+
+    max_iter: iterable of ints
+        List of number of iterations to fit for each voxel radius listed
+
     Returns
     -------
     trans: 4x4 np.array
@@ -69,8 +75,9 @@ def register_clouds(target, source):
         target.
     """
 
-    voxel_radius = [0.04, 0.02, 0.01]
-    max_iter = [50, 30, 14]
+    if len(max_iter) != len(voxel_radius):
+        raise TypeError("max_iter and voxel_radius should have the same number of items")
+
     current_transformation = np.identity(4)
     # calculate normals for point to plane registration
     for cloud in [source, target]:
@@ -78,9 +85,7 @@ def register_clouds(target, source):
             cloud.estimate_normals(
                 o3d.geometry.KDTreeSearchParamHybrid(radius=0.04 * 2,
                                                      max_nn=30))
-    for scale in range(3):
-        iter = max_iter[scale]
-        radius = voxel_radius[scale]
+    for radius, iter in zip(voxel_radius, max_iter):
 
         # downsample point cloud to speed up matching
         source_down = source.voxel_down_sample(radius)
@@ -250,6 +255,99 @@ def region_grow(pcd, tol=0.95, find_planes=False):
         ind = [i for i in ind if i not in plane]
 
     return planes_list
+
+
+def crop_distance(pcd, region):
+    points = np.asarray(pcd.points)
+    dist = np.linalg.norm(points, axis=1)
+    ind = [i for i, j in enumerate(dist) if j > region]
+    return ind
+
+def isolate_model(pcl):
+    ind = crop_distance(pcl, 0.7)
+    cl = pcl.select_down_sample(ind, invert=True)
+    pcd = cl.voxel_down_sample(0.01)
+
+    # ragion grow to find planes
+    planes_list = region_grow(pcd, tol=0.9, find_planes=True)
+
+    # largest collection will be the table
+    plane = planes_list[np.argmax(np.array([len(i) for i in planes_list]))]
+    plane = pcd.select_down_sample(np.array(list(plane)))
+
+    # get plane equation of table
+    plane_points = np.asarray(plane.points)
+    pseudoinverse = np.linalg.pinv(plane_points.T)
+    norm = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
+
+    # get vectors on plane
+    u, s, v = np.linalg.svd(plane_points - np.mean(plane_points, axis=0))
+    princ_vecs = v[0:2]
+
+    # remove anything below the table
+    dist = 1/np.linalg.norm(norm)
+    norm *= dist
+    dot_match = np.abs(np.asarray(cl.points).dot(norm))
+    del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.97*dist]
+    cl = cl.select_down_sample(del_ind)
+
+    # get colours of the table and remove similar colours
+    table_colour = np.average(np.asarray(plane.colors),axis=0)
+    dot_match = np.abs(np.asarray(cl.colors).dot(table_colour))
+    del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.65]
+    cl = cl.select_down_sample(del_ind)
+
+    cl, ind = clean_cloud(cl, std_ratio=1)
+
+
+    # Move centre of mass to origin
+    centre = cl.get_center()
+    cl.translate(-centre)
+
+    # move plane equation - note norm is not a unit vector so eq of plane is n.x=1
+    dist = dist - norm.dot(centre)
+
+    # remove final straggles away from centre
+    ind = crop_distance(cl, 0.1)
+    cl = cl.select_down_sample(ind, invert=True)
+    centre = cl.get_center()
+    cl.translate(-centre)
+    dist = dist - norm.dot(centre)
+
+    # align plane with axis orientation
+    axis = np.array([0,-1,0]) # principle axis of alignment
+    cross = np.cross(axis, norm)
+    cos_ang = axis.dot(norm)
+
+    cross_skew = np.array([[0,         -cross[2], cross[1] ],
+                           [cross[2],  0,         -cross[0]],
+                           [-cross[1], cross[0],  0        ]])
+
+    R = np.identity(3) + cross_skew + np.matmul(cross_skew, cross_skew)*(1-cos_ang)/(np.linalg.norm(cross)**2)
+
+    R = np.array([[R[0][0], R[0][1], R[0][2], 0],
+                  [R[1][0], R[1][1], R[1][2], 0],
+                  [R[2][0], R[2][1], R[2][2], 0],
+                  [0      , 0      , 0      , 1]])
+
+
+    # add back in plane
+    size = 100
+    x = np.linspace(-0.1,0.1, size)
+    y = np.linspace(-0.1,0.1, size)
+    xv, yv = np.meshgrid(x,y)
+    xv = xv.flatten()
+    yv = yv.flatten()
+    plane_points = princ_vecs[0]*np.reshape(xv, (len(xv),1)) + princ_vecs[1]*np.reshape(yv, (len(yv),1))
+    plane_points += np.ones((len(xv), 3))*norm*dist
+    plane.points = o3d.utility.Vector3dVector(plane_points)
+    plane.paint_uniform_color([0, 0.5, 0])
+
+    cl = cl.transform(R)
+    plane = plane.transform(R)
+
+    return cl, plane
+
 
 
 if __name__ == "__main__":
