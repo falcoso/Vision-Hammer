@@ -1,6 +1,5 @@
 import open3d as o3d
 import numpy as np
-import colorsys
 
 
 def hist_normals(pcd, bin_size=0.95):
@@ -47,7 +46,10 @@ def hist_normals(pcd, bin_size=0.95):
     return vec_list
 
 
-def register_clouds(target, source, voxel_radius=[0.04, 0.02, 0.01] , max_iter=[50, 30, 14]):
+def register_clouds(target, source,
+                    voxel_radius=[0.04, 0.02, 0.01],
+                    max_iter=[50, 30, 14],
+                    current_transformation=np.identity(4)):
     """
     Colored pointcloud registration
     This is implementation of following paper
@@ -68,6 +70,9 @@ def register_clouds(target, source, voxel_radius=[0.04, 0.02, 0.01] , max_iter=[
     max_iter: iterable of ints
         List of number of iterations to fit for each voxel radius listed
 
+    current_transformation: 4x4 np.array
+        Initial transformation of the source onto the target.
+
     Returns
     -------
     trans: 4x4 np.array
@@ -78,7 +83,6 @@ def register_clouds(target, source, voxel_radius=[0.04, 0.02, 0.01] , max_iter=[
     if len(max_iter) != len(voxel_radius):
         raise TypeError("max_iter and voxel_radius should have the same number of items")
 
-    current_transformation = np.identity(4)
     # calculate normals for point to plane registration
     for cloud in [source, target]:
         if not cloud.has_normals():
@@ -93,8 +97,8 @@ def register_clouds(target, source, voxel_radius=[0.04, 0.02, 0.01] , max_iter=[
 
         result_icp = o3d.registration.registration_colored_icp(
             source_down, target_down, radius, current_transformation,
-            o3d.registration.ICPConvergenceCriteria(relative_fitness=1e-6,
-                                                    relative_rmse=1e-6,
+            o3d.registration.ICPConvergenceCriteria(relative_fitness=1e-7,
+                                                    relative_rmse=1e-7,
                                                     max_iteration=iter))
 
         current_transformation = result_icp.transformation
@@ -263,6 +267,7 @@ def crop_distance(pcd, region):
     ind = [i for i, j in enumerate(dist) if j > region]
     return ind
 
+
 def isolate_model(pcl):
     ind = crop_distance(pcl, 0.7)
     cl = pcl.select_down_sample(ind, invert=True)
@@ -275,36 +280,38 @@ def isolate_model(pcl):
     plane = planes_list[np.argmax(np.array([len(i) for i in planes_list]))]
     plane = pcd.select_down_sample(np.array(list(plane)))
 
-    # get plane equation of table
-    plane_points = np.asarray(plane.points)
-    pseudoinverse = np.linalg.pinv(plane_points.T)
-    norm = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
-
     # get vectors on plane
+    plane_points = np.asarray(plane.points)
     u, s, v = np.linalg.svd(plane_points - np.mean(plane_points, axis=0))
-    princ_vecs = v[0:2]
+    norm = v[:][2]
+    if norm.dot([0, 1, 0]) > 0:
+        norm = -norm
+    dist = np.mean(plane_points.dot(norm))
+
+    # by least squares - gives slightly different vectors sometimes??
+    # pseudoinverse = np.linalg.pinv(plane_points.T)
+    # norm = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
+    # dist = 1/np.linalg.norm(norm)
+    # norm *= dist
 
     # remove anything below the table
-    dist = 1/np.linalg.norm(norm)
-    norm *= dist
     dot_match = np.abs(np.asarray(cl.points).dot(norm))
     del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.97*dist]
     cl = cl.select_down_sample(del_ind)
 
     # get colours of the table and remove similar colours
-    table_colour = np.average(np.asarray(plane.colors),axis=0)
+    table_colour = np.average(np.asarray(plane.colors), axis=0)
     dot_match = np.abs(np.asarray(cl.colors).dot(table_colour))
-    del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.65]
+    del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.7]
     cl = cl.select_down_sample(del_ind)
 
     cl, ind = clean_cloud(cl, std_ratio=1)
-
 
     # Move centre of mass to origin
     centre = cl.get_center()
     cl.translate(-centre)
 
-    # move plane equation - note norm is not a unit vector so eq of plane is n.x=1
+    # move plane equation - by subtracting plane distance
     dist = dist - norm.dot(centre)
 
     # remove final straggles away from centre
@@ -315,43 +322,51 @@ def isolate_model(pcl):
     dist = dist - norm.dot(centre)
 
     # align plane with axis orientation
-    axis = np.array([0,-1,0]) # principle axis of alignment
-    cross = np.cross(axis, norm)
+    axis = np.array([0, -1, 0])  # principle axis of alignment
+    cross = -np.cross(axis, norm)
     cos_ang = axis.dot(norm)
 
-    cross_skew = np.array([[0,         -cross[2], cross[1] ],
+    cross_skew = np.array([[0,         -cross[2], cross[1]],
                            [cross[2],  0,         -cross[0]],
-                           [-cross[1], cross[0],  0        ]])
+                           [-cross[1], cross[0],  0]])
 
-    R = np.identity(3) + cross_skew + np.matmul(cross_skew, cross_skew)*(1-cos_ang)/(np.linalg.norm(cross)**2)
+    R = np.identity(3) + cross_skew + np.matmul(cross_skew, cross_skew) * \
+        (1-cos_ang)/(np.linalg.norm(cross)**2)
 
     R = np.array([[R[0][0], R[0][1], R[0][2], 0],
                   [R[1][0], R[1][1], R[1][2], 0],
                   [R[2][0], R[2][1], R[2][2], 0],
-                  [0      , 0      , 0      , 1]])
-
+                  [0, 0, 0, 1]])
 
     # add back in plane
     size = 100
-    x = np.linspace(-0.1,0.1, size)
-    y = np.linspace(-0.1,0.1, size)
-    xv, yv = np.meshgrid(x,y)
+    x = np.linspace(-0.1, 0.1, size)
+    y = np.linspace(-0.1, 0.1, size)
+    xv, yv = np.meshgrid(x, y)
     xv = xv.flatten()
     yv = yv.flatten()
-    plane_points = princ_vecs[0]*np.reshape(xv, (len(xv),1)) + princ_vecs[1]*np.reshape(yv, (len(yv),1))
-    plane_points += np.ones((len(xv), 3))*norm*dist
+    plane_points = np.array([1, 0, 0])*np.reshape(xv, (len(xv), 1)) + \
+        np.array([0, 0, 1])*np.reshape(yv, (len(yv), 1))
     plane.points = o3d.utility.Vector3dVector(plane_points)
     plane.paint_uniform_color([0, 0.5, 0])
 
     cl = cl.transform(R)
-    plane = plane.transform(R)
+    # place plane at origin
+    cl.translate([0, dist, 0])
 
-    return cl, plane
+    return cl
 
 
-
-if __name__ == "__main__":
-    pcd = o3d.io.read_point_cloud("./Point Clouds/combined_cloud_clean.ply")
-    lines = hist_normals(pcd)
-    line_set = create_vector_graph(lines)
-    o3d.visualization.draw_geometries([pcd, line_set])
+def create_origin_plane(size):
+    """Creates plane aligned with origin and normal in y direction"""
+    plane = o3d.geometry.PointCloud()
+    x = np.linspace(-0.1, 0.1, size)
+    y = np.linspace(-0.1, 0.1, size)
+    xv, yv = np.meshgrid(x, y)
+    xv = xv.flatten()
+    yv = yv.flatten()
+    plane_points = np.array([1, 0, 0])*np.reshape(xv, (len(xv), 1)) + \
+        np.array([0, 0, 1])*np.reshape(yv, (len(yv), 1))
+    plane.points = o3d.utility.Vector3dVector(plane_points)
+    plane.paint_uniform_color([0, 0.5, 0])
+    return plane

@@ -83,3 +83,28 @@ Created a set of several related point clouds to try registering with open3d.
   cut out all but legs
 
   nerbs
+
+12/11/19
+  Fine tuning the registration algorithm and forcing in the table planes does
+  cause some of the clouds to register correctly, however outliers in the plane
+  fitting causes some of the initial alignment to be off. Currently looking at
+  Hough transforms and RANSAC to more reliably fit the planes.
+
+  Upon testing an example where the plane fit is poor I noticed that the SVD
+  with smallest eigen value is different to pseudoinverse result - looking in
+  to whether this is to do with small coordinate system so will play around
+  with scaling
+
+19/11/19
+  Turns out there was nothing wrong with the plane fitting but SVD was used
+  since all the principle vectors were required later on so no point
+  re-computing.
+
+  Created the combined meshes of the models using CloudCompare and aligning them
+  by hand. Have a full model of the Broadside and Commander but its very noisey
+  so trying to create a mesh from them is hard. Ball Pivoting algorithm seems
+  to provide good results, but it occasionally flips to internal surfaces which
+  we don't want!
+
+  Also found that open3d does have a voxel carving method based on depth images
+  so that may be worth looking into should this fail.
