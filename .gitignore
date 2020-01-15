@@ -4,3 +4,13 @@ registration.py
 Building model/*
 *.npy
 .ipynb_checkpoints
+*.jpg
+*.JPG
+Reference Images/*
+Milestones/*
+Point Clouds/*
+
+*.obj
+*.mtl
+*.png
+*.ply

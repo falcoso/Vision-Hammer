@@ -108,3 +108,15 @@ Created a set of several related point clouds to try registering with open3d.
 
   Also found that open3d does have a voxel carving method based on depth images
   so that may be worth looking into should this fail.
+
+
+  you know the minimum size of models so can detect point clouds that are not models or parts of models from This
+
+03/01/19
+    While writing the report it was noticed that in the segmentation function
+    the input cloud is never reduced so there may be extensive repetition of
+    calculations - this might be why it runs so slow on non-downsampled clouds
+
+05/01/19
+    Segmentation still runs quite slowly so may be worth looking at other options
+    Previously a link to a clustering tutorial was used. Will look at this.

@@ -1,5 +1,7 @@
 import open3d as o3d
 import numpy as np
+import copy
+from tqdm import tqdm
 
 
 def hist_normals(pcd, bin_size=0.95):
@@ -223,40 +225,48 @@ def region_grow(pcd, tol=0.95, find_planes=False):
 
     # create list of indicies to match
     ind = list(range(np.asarray(pcd.points).shape[0]))
+    start_size = ind[-1]
     planes_list = []
+    normals = np.asarray(pcd.normals)
+    old_size = start_size
 
-    while len(ind) > 0:
-        start_point = ind.pop()
-        # find it's nearest neighbour
-        # k is number of nearest neighbours, idx is index in list _ is the distances
-        seeds = {start_point}
-        plane = {start_point}
-        normals = np.asarray(pcd.normals)
-        match_normal = normals[start_point]
-        counter = 0  # counter to re-align the vector
-        while seeds != set():
+    with tqdm(total=start_size) as t:
 
-            # get next point
-            seed = seeds.pop()
-            if not find_planes:
-                match_normal = normals[seed]
-            [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[seed], 30)
-            match = np.abs(normals.dot(match_normal))
-            plane_addition = {i for i in idx if match[i] > tol}
-            seed_addition = {i for i in plane_addition if i not in plane}
-            seeds.update(seed_addition)
-            plane.update(plane_addition)
+        while len(ind) > 0:
+            start_point = ind.pop()
+            # find it's nearest neighbour
+            # k is number of nearest neighbours, idx is index in list _ is the distances
+            seeds = {start_point}
+            plane = {start_point}
+            match_normal = normals[start_point]
+            counter = 0  # counter to re-align the vector
+            while seeds != set():
 
-            counter += 1
-            counter %= 100
-            if counter == 0 and find_planes:
-                plane_points = np.asarray(pcd.select_down_sample(np.array(list(plane))).points)
-                pseudoinverse = np.linalg.pinv(plane_points.T)
-                match_normal = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
-                match_normal /= np.linalg.norm(match_normal)
+                # get next point
+                seed = seeds.pop()
+                if not find_planes:
+                    match_normal = normals[seed]
+                [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[seed], 30)
+                kn_normals = normals[idx]
+                match = np.abs(kn_normals.dot(match_normal))
+                plane_addition = {i for i,j in zip(idx, match) if j > tol}
+                seed_addition = {i for i in plane_addition if i not in plane}
+                seeds.update(seed_addition)
+                plane.update(plane_addition)
+                ind = [i for i in ind if i not in plane_addition]
+                t.update(old_size-len(ind))
+                old_size = len(ind)
 
-        planes_list.append(np.array(list(plane), dtype=int))
-        ind = [i for i in ind if i not in plane]
+                counter += 1
+                counter %= 100
+                if counter == 0 and find_planes:
+                    plane_points = np.asarray(copy.deepcopy(pcd).select_down_sample(np.array(list(plane))).points)
+                    pseudoinverse = np.linalg.pinv(plane_points.T)
+                    match_normal = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
+                    match_normal /= np.linalg.norm(match_normal)
+
+            planes_list.append(np.array(list(plane), dtype=int))
+
 
     return planes_list
 
@@ -288,12 +298,6 @@ def isolate_model(pcl):
         norm = -norm
     dist = np.mean(plane_points.dot(norm))
 
-    # by least squares - gives slightly different vectors sometimes??
-    # pseudoinverse = np.linalg.pinv(plane_points.T)
-    # norm = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
-    # dist = 1/np.linalg.norm(norm)
-    # norm *= dist
-
     # remove anything below the table
     dot_match = np.abs(np.asarray(cl.points).dot(norm))
     del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.97*dist]
@@ -312,7 +316,7 @@ def isolate_model(pcl):
     cl.translate(-centre)
 
     # move plane equation - by subtracting plane distance
-    dist = dist - norm.dot(centre)
+    dist -= norm.dot(centre)
 
     # remove final straggles away from centre
     ind = crop_distance(cl, 0.1)
@@ -336,7 +340,7 @@ def isolate_model(pcl):
     R = np.array([[R[0][0], R[0][1], R[0][2], 0],
                   [R[1][0], R[1][1], R[1][2], 0],
                   [R[2][0], R[2][1], R[2][2], 0],
-                  [0, 0, 0, 1]])
+                  [0,       0,       0,       1]])
 
     # add back in plane
     size = 100
