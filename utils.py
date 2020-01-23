@@ -1,6 +1,5 @@
 import open3d as o3d
 import numpy as np
-import copy
 from tqdm import tqdm
 
 
@@ -217,6 +216,9 @@ def region_grow(pcd, tol=0.95, find_planes=False):
     planes_list : list of np.array(int)
         List of arrays containing the indicies for all points in the segement
         from the point cloud.
+
+    plane_normals : list of np.array(float) 3-vectors
+        Normals for each plane in planes list.
     """
     pcd_tree = o3d.geometry.KDTreeFlann(pcd)
     if not pcd.has_normals():
@@ -224,9 +226,10 @@ def region_grow(pcd, tol=0.95, find_planes=False):
                                                                   max_nn=30))
 
     # create list of indicies to match
-    ind = list(range(np.asarray(pcd.points).shape[0]))
-    start_size = ind[-1]
+    ind = set(range(np.asarray(pcd.points).shape[0]))
+    start_size = np.asarray(pcd.points).shape[0]
     planes_list = []
+    plane_normals = []
     normals = np.asarray(pcd.normals)
     old_size = start_size
 
@@ -247,26 +250,33 @@ def region_grow(pcd, tol=0.95, find_planes=False):
                 if not find_planes:
                     match_normal = normals[seed]
                 [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[seed], 30)
+                idx = list((set(idx)-plane).intersection(ind))
                 kn_normals = normals[idx]
                 match = np.abs(kn_normals.dot(match_normal))
-                plane_addition = {i for i,j in zip(idx, match) if j > tol}
-                seed_addition = {i for i in plane_addition if i not in plane}
-                seeds.update(seed_addition)
+                plane_addition = {i for i, j in zip(idx, match) if j > tol}
+
+                # all elements in plane_addition not already in the plane
+                seeds.update(plane_addition-plane)
                 plane.update(plane_addition)
-                ind = [i for i in ind if i not in plane_addition]
-                t.update(old_size-len(ind))
-                old_size = len(ind)
 
                 counter += 1
                 counter %= 100
                 if counter == 0 and find_planes:
-                    plane_points = np.asarray(copy.deepcopy(pcd).select_down_sample(np.array(list(plane))).points)
+                    plane_points = np.asarray(pcd.select_down_sample(list(plane)).points)
                     pseudoinverse = np.linalg.pinv(plane_points.T)
                     match_normal = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
                     match_normal /= np.linalg.norm(match_normal)
 
+            # remove all processed points
+            ind = ind - plane
+            t.update(old_size-len(ind))
+            old_size = len(ind)
             planes_list.append(np.array(list(plane), dtype=int))
+            if find_planes:
+                plane_normals.append(match_normal)
 
+    if find_planes:
+        return planes_list, plane_normals
 
     return planes_list
 
@@ -300,7 +310,8 @@ def isolate_model(pcl):
 
     # remove anything below the table
     dot_match = np.abs(np.asarray(cl.points).dot(norm))
-    del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.97*dist]
+    del_ind = np.where(dot_match < 0.97*dist)[0]
+    # del_ind [i for i in range(len(dot_match)) if dot_match[i] < 0.97*dist]
     cl = cl.select_down_sample(del_ind)
 
     # get colours of the table and remove similar colours
@@ -374,3 +385,37 @@ def create_origin_plane(size):
     plane.points = o3d.utility.Vector3dVector(plane_points)
     plane.paint_uniform_color([0, 0.5, 0])
     return plane
+
+
+def remove_planes(pcd, svd_ratio=20):
+    """
+    Removes any planes from a scene.
+
+    Parameters
+    ----------
+    pcd : open3d.geometry.PointCloud
+        Point Cloud to segment
+    svd_ratio : float (20)
+        The minimum value of s.max()/s.min() for a cluster to be considered a
+        plane, where s is the singular values of the cluster's points.
+
+    Returns
+    -------
+    pcd : open3d.geometry.PointCloud
+        Point Cloud with all planes removed
+    """
+    print("Segmenting Planes...")
+    planes_list, plane_normals = region_grow(pcd, find_planes=True, tol=0.9)
+    print("Processing Planes")
+
+    to_remove = []
+    for plane in planes_list:
+        points = np.asarray(pcd.points)[plane]
+        points -= np.mean(points, axis=0)
+        s = np.linalg.svd(points, compute_uv=False)
+
+        # planes or lines will have at least 1 small singular value
+        if len(s) == 3 and s.max()/s.min() > svd_ratio:
+            to_remove += list(plane)
+
+    return pcd.select_down_sample(to_remove, invert=True)
