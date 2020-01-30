@@ -1,6 +1,34 @@
+"""
+Utility functions for displaying, formatting and colouring point clouds
+
+Author O.G.Jones
+
+Functions
+---------
+hist_normals - Returns a list of most common normals ordered by magnitude for a
+    given point cloud. All vectors returned are normalised by the largest
+    magnitude.
+
+hist_plane_norms - Histograms a list of planes' normals scaled by the plane's
+    size.
+
+clean_cloud - Cleans a point supplied point cloud of statistical outliers.
+
+display_inlier_outlier - Displays the point cloud with points of index in ind
+    highlighted red
+
+create_vector_graph - Creats a Line Geometry of the supplied vectors coming
+    from the origin.
+
+crop_distance - Crops a cloud to everything less than <region> from the
+    audience.
+
+create_origin_plane - Creates plane aligned with origin and normal in y
+    direction.
+"""
+
 import open3d as o3d
 import numpy as np
-from tqdm import tqdm
 
 
 def hist_normals(pcd, bin_size=0.95):
@@ -47,63 +75,31 @@ def hist_normals(pcd, bin_size=0.95):
     return vec_list
 
 
-def register_clouds(target, source,
-                    voxel_radius=[0.04, 0.02, 0.01],
-                    max_iter=[50, 30, 14],
-                    current_transformation=np.identity(4)):
-    """
-    Colored pointcloud registration
-    This is implementation of following paper
-    J. Park, Q.-Y. Zhou, V. Koltun,
-    Colored Point Cloud Registration Revisited, ICCV 2017
+def hist_plane_norms(planes_list, plane_norms, bin_size=0.95):
+    """Histograms a list of planes' normals scaled by the plane's size"""
+    vec_list = []
+    plane_lens = np.array([len(i) for i in planes_list])
+    while len(plane_norms) > 1:
+        normal = plane_norms[0]
+        plane_len = plane_lens[0]
+        plane_norms = plane_norms[1:]
+        plane_lens = plane_lens[1:]
 
-    Parameters
-    ----------
-    target: open3d.geometry.PointCloud
-        Ground truth point cloud.
+        dot_prod = np.abs(plane_norms.dot(normal))
+        ind = np.array([i for i in range(len(dot_prod)) if dot_prod[i] > bin_size], dtype=int)
+        if list(ind) == []:
+            vec_list.append(normal*plane_len)
+        else:
+            vec_list.append(normal*(np.sum(plane_lens[ind])+plane_len))
+        plane_norms = np.delete(plane_norms, ind, axis=0)
+        plane_lens = np.delete(plane_lens, ind, axis=0)
 
-    source: open3d.geometry.PointCloud
-        Point cloud to which transformation will be applied for aligning.
+    vec_list = np.abs(np.array(vec_list))
+    # normalise vectors based on largest magnitude
+    mags = np.max(np.linalg.norm(vec_list, axis=0))
+    vec_list /= mags
 
-    voxel_radius: iterable of floats
-        List of voxel radii to down sample for each round of iteration
-
-    max_iter: iterable of ints
-        List of number of iterations to fit for each voxel radius listed
-
-    current_transformation: 4x4 np.array
-        Initial transformation of the source onto the target.
-
-    Returns
-    -------
-    trans: 4x4 np.array
-        Transformation matrix that when applied to source will align it with
-        target.
-    """
-
-    if len(max_iter) != len(voxel_radius):
-        raise TypeError("max_iter and voxel_radius should have the same number of items")
-
-    # calculate normals for point to plane registration
-    for cloud in [source, target]:
-        if not cloud.has_normals():
-            cloud.estimate_normals(
-                o3d.geometry.KDTreeSearchParamHybrid(radius=0.04 * 2,
-                                                     max_nn=30))
-    for radius, iter in zip(voxel_radius, max_iter):
-
-        # downsample point cloud to speed up matching
-        source_down = source.voxel_down_sample(radius)
-        target_down = target.voxel_down_sample(radius)
-
-        result_icp = o3d.registration.registration_colored_icp(
-            source_down, target_down, radius, current_transformation,
-            o3d.registration.ICPConvergenceCriteria(relative_fitness=1e-7,
-                                                    relative_rmse=1e-7,
-                                                    max_iteration=iter))
-
-        current_transformation = result_icp.transformation
-    return result_icp.transformation
+    return vec_list
 
 
 def clean_cloud(pcd_fp, std_ratio=1, nb_neighbors=20, view=False, pcd_sl=None):
@@ -197,179 +193,12 @@ def create_vector_graph(vectors):
     return line_set
 
 
-def region_grow(pcd, tol=0.95, find_planes=False):
-    """
-    Segments point cloud using a region growing algorithm
-
-    Parameters
-    ----------
-    pcd : open3d.geometry.PointCloud
-        Point Cloud to segment
-    tol : float (0.95)
-        Value between 0 and 1 for how sensitive to curvature the region growing
-        should be
-    find_planes : bool (False)
-        If True, the region will segment trying to find planes in the model.
-
-    Returns
-    -------
-    planes_list : list of np.array(int)
-        List of arrays containing the indicies for all points in the segement
-        from the point cloud.
-
-    plane_normals : list of np.array(float) 3-vectors
-        Normals for each plane in planes list.
-    """
-    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-    if not pcd.has_normals():
-        pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.04 * 2,
-                                                                  max_nn=30))
-
-    # create list of indicies to match
-    ind = set(range(np.asarray(pcd.points).shape[0]))
-    start_size = np.asarray(pcd.points).shape[0]
-    planes_list = []
-    plane_normals = []
-    normals = np.asarray(pcd.normals)
-    old_size = start_size
-
-    with tqdm(total=start_size) as t:
-
-        while len(ind) > 0:
-            start_point = ind.pop()
-            # find it's nearest neighbour
-            # k is number of nearest neighbours, idx is index in list _ is the distances
-            seeds = {start_point}
-            plane = {start_point}
-            match_normal = normals[start_point]
-            counter = 0  # counter to re-align the vector
-            while seeds != set():
-
-                # get next point
-                seed = seeds.pop()
-                if not find_planes:
-                    match_normal = normals[seed]
-                [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[seed], 30)
-                idx = list((set(idx)-plane).intersection(ind))
-                kn_normals = normals[idx]
-                match = np.abs(kn_normals.dot(match_normal))
-                plane_addition = {i for i, j in zip(idx, match) if j > tol}
-
-                # all elements in plane_addition not already in the plane
-                seeds.update(plane_addition-plane)
-                plane.update(plane_addition)
-
-                counter += 1
-                counter %= 100
-                if counter == 0 and find_planes:
-                    plane_points = np.asarray(pcd.select_down_sample(list(plane)).points)
-                    pseudoinverse = np.linalg.pinv(plane_points.T)
-                    match_normal = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
-                    match_normal /= np.linalg.norm(match_normal)
-
-            # remove all processed points
-            ind = ind - plane
-            t.update(old_size-len(ind))
-            old_size = len(ind)
-            planes_list.append(np.array(list(plane), dtype=int))
-            if find_planes:
-                plane_normals.append(match_normal)
-
-    if find_planes:
-        return planes_list, plane_normals
-
-    return planes_list
-
-
 def crop_distance(pcd, region):
+    """Crops a cloud to everything less than <region> from the audience"""
     points = np.asarray(pcd.points)
     dist = np.linalg.norm(points, axis=1)
     ind = [i for i, j in enumerate(dist) if j > region]
     return ind
-
-
-def isolate_model(pcl):
-    ind = crop_distance(pcl, 0.7)
-    cl = pcl.select_down_sample(ind, invert=True)
-    pcd = cl.voxel_down_sample(0.01)
-
-    # ragion grow to find planes
-    planes_list = region_grow(pcd, tol=0.9, find_planes=True)
-
-    # largest collection will be the table
-    plane = planes_list[np.argmax(np.array([len(i) for i in planes_list]))]
-    plane = pcd.select_down_sample(np.array(list(plane)))
-
-    # get vectors on plane
-    plane_points = np.asarray(plane.points)
-    u, s, v = np.linalg.svd(plane_points - np.mean(plane_points, axis=0))
-    norm = v[:][2]
-    if norm.dot([0, 1, 0]) > 0:
-        norm = -norm
-    dist = np.mean(plane_points.dot(norm))
-
-    # remove anything below the table
-    dot_match = np.abs(np.asarray(cl.points).dot(norm))
-    del_ind = np.where(dot_match < 0.97*dist)[0]
-    # del_ind [i for i in range(len(dot_match)) if dot_match[i] < 0.97*dist]
-    cl = cl.select_down_sample(del_ind)
-
-    # get colours of the table and remove similar colours
-    table_colour = np.average(np.asarray(plane.colors), axis=0)
-    dot_match = np.abs(np.asarray(cl.colors).dot(table_colour))
-    del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.7]
-    cl = cl.select_down_sample(del_ind)
-
-    cl, ind = clean_cloud(cl, std_ratio=1)
-
-    # Move centre of mass to origin
-    centre = cl.get_center()
-    cl.translate(-centre)
-
-    # move plane equation - by subtracting plane distance
-    dist -= norm.dot(centre)
-
-    # remove final straggles away from centre
-    ind = crop_distance(cl, 0.1)
-    cl = cl.select_down_sample(ind, invert=True)
-    centre = cl.get_center()
-    cl.translate(-centre)
-    dist = dist - norm.dot(centre)
-
-    # align plane with axis orientation
-    axis = np.array([0, -1, 0])  # principle axis of alignment
-    cross = -np.cross(axis, norm)
-    cos_ang = axis.dot(norm)
-
-    cross_skew = np.array([[0,         -cross[2], cross[1]],
-                           [cross[2],  0,         -cross[0]],
-                           [-cross[1], cross[0],  0]])
-
-    R = np.identity(3) + cross_skew + np.matmul(cross_skew, cross_skew) * \
-        (1-cos_ang)/(np.linalg.norm(cross)**2)
-
-    R = np.array([[R[0][0], R[0][1], R[0][2], 0],
-                  [R[1][0], R[1][1], R[1][2], 0],
-                  [R[2][0], R[2][1], R[2][2], 0],
-                  [0,       0,       0,       1]])
-
-    # add back in plane
-    size = 100
-    x = np.linspace(-0.1, 0.1, size)
-    y = np.linspace(-0.1, 0.1, size)
-    xv, yv = np.meshgrid(x, y)
-    xv = xv.flatten()
-    yv = yv.flatten()
-    plane_points = np.array([1, 0, 0])*np.reshape(xv, (len(xv), 1)) + \
-        np.array([0, 0, 1])*np.reshape(yv, (len(yv), 1))
-    plane.points = o3d.utility.Vector3dVector(plane_points)
-    plane.paint_uniform_color([0, 0.5, 0])
-
-    cl = cl.transform(R)
-    # place plane at origin
-    cl.translate([0, dist, 0])
-
-    return cl
 
 
 def create_origin_plane(size):
@@ -385,37 +214,3 @@ def create_origin_plane(size):
     plane.points = o3d.utility.Vector3dVector(plane_points)
     plane.paint_uniform_color([0, 0.5, 0])
     return plane
-
-
-def remove_planes(pcd, svd_ratio=20):
-    """
-    Removes any planes from a scene.
-
-    Parameters
-    ----------
-    pcd : open3d.geometry.PointCloud
-        Point Cloud to segment
-    svd_ratio : float (20)
-        The minimum value of s.max()/s.min() for a cluster to be considered a
-        plane, where s is the singular values of the cluster's points.
-
-    Returns
-    -------
-    pcd : open3d.geometry.PointCloud
-        Point Cloud with all planes removed
-    """
-    print("Segmenting Planes...")
-    planes_list, plane_normals = region_grow(pcd, find_planes=True, tol=0.9)
-    print("Processing Planes")
-
-    to_remove = []
-    for plane in planes_list:
-        points = np.asarray(pcd.points)[plane]
-        points -= np.mean(points, axis=0)
-        s = np.linalg.svd(points, compute_uv=False)
-
-        # planes or lines will have at least 1 small singular value
-        if len(s) == 3 and s.max()/s.min() > svd_ratio:
-            to_remove += list(plane)
-
-    return pcd.select_down_sample(to_remove, invert=True)

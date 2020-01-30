@@ -120,3 +120,24 @@ Created a set of several related point clouds to try registering with open3d.
 05/01/19
     Segmentation still runs quite slowly so may be worth looking at other options
     Previously a link to a clustering tutorial was used. Will look at this.
+
+26/01/19
+    Improved segmentation with DBSCAN - planes are removed from a scene and then
+    clustered for region proposals. There is an open3d implementation of this
+    but if this gets harder on larger scenes, the sklearn DBSCAN has
+    parallelisation which may speed things up.
+
+    Another two reference models have been made. AliceVision outputs a .obj file
+    with a .mtl which is proving strangely difficult to convert to a .ply that
+    has colour. For now it may be worth registering using the point cloud output
+    of MeshRoom which does have colour combined, but some of the references may
+    be patchy.
+
+    Have tested the algorithm on the board scenes and even without registering
+    the table is isolated very effectively.
+
+28/01/20
+    Have updated how the table section is isolated, in case the veiw of the
+    floor in a scene is quite large. instead of just finding the largest plane
+    the program will instead find the common floor direction vector and then
+    find the plane closest to that direction.
