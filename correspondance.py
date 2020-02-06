@@ -21,9 +21,11 @@ remove_planes - Removes any planes from a scene.
 import open3d as o3d
 import numpy as np
 import utils
+import copy
 
 from tqdm import tqdm
 from sklearn.cluster import DBSCAN
+
 
 def register_clouds(target, source,
                     voxel_radius=[0.04, 0.02, 0.01],
@@ -83,6 +85,7 @@ def register_clouds(target, source,
         current_transformation = result_icp.transformation
     return result_icp.transformation
 
+
 def region_grow(pcd, tol=0.95, find_planes=False):
     """
     Segments point cloud using a region growing algorithm.
@@ -107,9 +110,6 @@ def region_grow(pcd, tol=0.95, find_planes=False):
         Normals for each plane in planes list.
     """
     pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-    if not pcd.has_normals():
-        pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.04 * 2,
-                                                                  max_nn=30))
 
     # create list of indicies to match
     ind = set(range(np.asarray(pcd.points).shape[0]))
@@ -201,6 +201,9 @@ def isolate_model(pcd):
     plane_points = np.asarray(plane.points)
     u, s, v = np.linalg.svd(plane_points - np.mean(plane_points, axis=0))
     norm = v[:][2]
+
+    # TODO: This should be less than, which is why below the y-axis has to be
+    # inverted for correct alignment
     if norm.dot([0, 1, 0]) > 0:
         norm = -norm
     dist = np.mean(plane_points.dot(norm))
@@ -235,20 +238,7 @@ def isolate_model(pcd):
 
     # align plane with axis orientation
     axis = np.array([0, -1, 0])  # principle axis of alignment
-    cross = -np.cross(axis, norm)
-    cos_ang = axis.dot(norm)
-
-    cross_skew = np.array([[0,         -cross[2], cross[1]],
-                           [cross[2],  0,         -cross[0]],
-                           [-cross[1], cross[0],  0]])
-
-    R = np.identity(3) + cross_skew + np.matmul(cross_skew, cross_skew) * \
-        (1-cos_ang)/(np.linalg.norm(cross)**2)
-
-    R = np.array([[R[0][0], R[0][1], R[0][2], 0],
-                  [R[1][0], R[1][1], R[1][2], 0],
-                  [R[2][0], R[2][1], R[2][2], 0],
-                  [0,       0,       0,       1]])
+    R = utils.align_vectors(norm, axis)
 
     # add back in plane
     size = 100
@@ -268,6 +258,7 @@ def isolate_model(pcd):
 
     return cl
 
+
 def segment(pcd, *args, **kwargs):
     """
     Segments a scene of a warhammer board and classified regions of interest.
@@ -285,7 +276,10 @@ def segment(pcd, *args, **kwargs):
     -------
     labels : numpy.array(int)
         integer label for classifying each point. -1 are outliers, max value
-        is the table
+        is the table.
+
+    Normal : numpy.array(3)
+        3 dimensional unit vector for the normal of the table.
     """
 
     # get table plane
@@ -312,7 +306,7 @@ def segment(pcd, *args, **kwargs):
     labels[inliers] = cluster_labels
     labels[outliers] = -1
     labels[plane] = np.max(labels)+1
-    return labels
+    return labels, Normal
 
 
 def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
@@ -389,3 +383,40 @@ def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
     cl = pcd.select_down_sample(to_remove, invert=True)
 
     return cl
+
+
+def matching(pcd, labels):
+    # define fp to reference models
+    refs = {}
+    refs["Commander"] = o3d.io.read_point_cloud("./Point Clouds/Commander Ref.ply")
+    refs["Broadside"] = o3d.io.read_point_cloud("./Point Clouds/Broadside Ref.ply")
+    ref_vols = np.array([i.get_oriented_bounding_box().volume() for j, i in refs.items()])
+
+    # go through all clusters that have been labelled but not classified as
+    # outliers or the table plane
+    for i in range(labels.max()):  # note that this will go up to but not include table
+        cluster = np.where(labels == i)[0]
+        cluster = pcd.select_down_sample(cluster)
+        vol = cluster.get_oriented_bounding_box().volume()
+
+        # first filter possible matches based on size
+        matches = []
+        if vol > np.max(ref_vols): # potentially item of scenery, cluster more finely
+            print("Scenery cluster")
+            o3d.io.write_point_cloud("building.ply", cluster)
+            points = np.asarray(cluster.points)
+            print(points)
+            points = np.delete(points, 1, axis=1)
+            print(points)
+            o3d.visualization.draw_geometries([cluster, cluster.get_axis_aligned_bounding_box()])
+
+        elif vol < 0.3*np.min(ref_vols):
+            pass # not big enough to classify
+        else:
+            for (key, cl), ref_vol in zip(refs.items(), ref_vols):
+                if vol <= ref_vol and vol > 0.3*ref_vol:
+                    matches.append(key)
+
+            match_rate = np.zeros(len(matches))
+            for match in matches:
+                cluster.translate(-cluster.get_center())

@@ -9,9 +9,6 @@ hist_normals - Returns a list of most common normals ordered by magnitude for a
     given point cloud. All vectors returned are normalised by the largest
     magnitude.
 
-hist_plane_norms - Histograms a list of planes' normals scaled by the plane's
-    size.
-
 clean_cloud - Cleans a point supplied point cloud of statistical outliers.
 
 display_inlier_outlier - Displays the point cloud with points of index in ind
@@ -31,7 +28,7 @@ import open3d as o3d
 import numpy as np
 
 
-def hist_normals(pcd, bin_size=0.95):
+def hist_normals(normals, bin_size=0.95):
     """
     Returns a list of most common normals ordered by magnitude for a given point
     cloud. All vectors returned are normalised by the largest magnitude.
@@ -48,53 +45,23 @@ def hist_normals(pcd, bin_size=0.95):
     -------
     hist_vect: np.array/ open3d.LineSet
     """
-    # estimate normals
-    if not pcd.has_normals():
-        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
-            radius=0.1, max_nn=30))
-    normals = np.asarray(pcd.normals)
-
     # create empty list to bin into
     vec_list = []
-    while len(normals) > 1:
+    mags = 1/np.linalg.norm(normals, axis=1)
+    unit_norms = np.array([i*j for i, j in zip(normals, mags)])
+    while len(normals) > 0:
         # select first normal and get dot product with all other normals
-        normal = normals[0]
-        normals = normals[1:-1]
-        dot_prod = np.abs(normals.dot(normal))
-        ind = np.array([i for i in range(len(dot_prod)) if dot_prod[i] > bin_size])
-
-        vec_list.append(normal*len(ind))
+        normal = unit_norms[0]
+        dot_prod = unit_norms.dot(normal)
+        ind = np.where(np.abs(dot_prod) > bin_size)[0]
+        # dot with sign incase vectors are aligned but in opposite directions
+        vec = np.sign(dot_prod[ind]).dot(normals[ind])
+        vec_list.append(vec)
         # delete all normals that have been matched
         normals = np.delete(normals, ind, axis=0)
+        unit_norms = np.delete(unit_norms, ind, axis=0)
 
-    vec_list = np.abs(np.array(vec_list))
-    # normalise vectors based on largest magnitude
-    mags = np.max(np.linalg.norm(vec_list, axis=0))
-    vec_list /= mags
-
-    return vec_list
-
-
-def hist_plane_norms(planes_list, plane_norms, bin_size=0.95):
-    """Histograms a list of planes' normals scaled by the plane's size"""
-    vec_list = []
-    plane_lens = np.array([len(i) for i in planes_list])
-    while len(plane_norms) > 1:
-        normal = plane_norms[0]
-        plane_len = plane_lens[0]
-        plane_norms = plane_norms[1:]
-        plane_lens = plane_lens[1:]
-
-        dot_prod = np.abs(plane_norms.dot(normal))
-        ind = np.array([i for i in range(len(dot_prod)) if dot_prod[i] > bin_size], dtype=int)
-        if list(ind) == []:
-            vec_list.append(normal*plane_len)
-        else:
-            vec_list.append(normal*(np.sum(plane_lens[ind])+plane_len))
-        plane_norms = np.delete(plane_norms, ind, axis=0)
-        plane_lens = np.delete(plane_lens, ind, axis=0)
-
-    vec_list = np.abs(np.array(vec_list))
+    vec_list = np.array(vec_list)
     # normalise vectors based on largest magnitude
     mags = np.max(np.linalg.norm(vec_list, axis=0))
     vec_list /= mags
@@ -214,3 +181,93 @@ def create_origin_plane(size):
     plane.points = o3d.utility.Vector3dVector(plane_points)
     plane.paint_uniform_color([0, 0.5, 0])
     return plane
+
+
+def align_vectors(origin, target):
+    """
+    Determines the transformation to map one vector onto another.
+
+    Parameters
+    ----------
+    origin : np.array(3)
+        3D vector that is unaligned
+    target : np.array(3)
+        3D vector onto which the transformation will map <origin>
+
+    Returns
+    -------
+    T: np.array(4,4)
+        4x4 homogenous transformation matrix that rotates origin onto target.
+    """
+
+    cross = -np.cross(target, origin)
+    cos_ang = target.dot(origin)
+
+    cross_skew = np.array([[0,         -cross[2], cross[1]],
+                           [cross[2],  0,         -cross[0]],
+                           [-cross[1], cross[0],  0]])
+
+    R = np.identity(3) + cross_skew + np.matmul(cross_skew, cross_skew) * \
+        (1-cos_ang)/(np.linalg.norm(cross)**2)
+
+    R = np.array([[R[0][0], R[0][1], R[0][2], 0],
+                  [R[1][0], R[1][1], R[1][2], 0],
+                  [R[2][0], R[2][1], R[2][2], 0],
+                  [0,       0,       0,       1]])
+    return R
+
+
+def colour_labels(pcd, labels):
+    """
+    Colours the points in a point cloud corresponding to their labels.
+
+    Parameters
+    ----------
+    pcd : open3d.geometry.PointCloud
+        Point cloud to be coloured.
+
+    labels : numpy.array(int)
+        Integer labels for each point in pcd.
+
+    Returns
+    -------
+    pcd : open3d.geometry.PointCloud
+        Coloured point cloud
+    """
+
+    colours = np.random.rand(labels.max()+1-labels.min(), 3)
+    for i in range(len(labels)):
+        pcd.colors[i] = colours[labels[i]]
+
+    return pcd
+
+def bounding_box_2d(points):
+    a  = np.array([(3.7, 1.7), (4.1, 3.8), (4.7, 2.9), (5.2, 2.8), (6.0,4.0), (6.3, 3.6), (9.7, 6.3), (10.0, 4.9), (11.0, 3.6), (12.5, 6.4)])
+    ca = np.cov(a,y = None,rowvar = 0,bias = 1)
+
+    v, vect = np.linalg.eig(ca)
+    tvect = np.transpose(vect)
+
+
+
+    #use the inverse of the eigenvectors as a rotation matrix and
+    #rotate the points so they align with the x and y axes
+    ar = np.dot(a,np.linalg.inv(tvect))
+
+    # get the minimum and maximum x and y
+    mina = np.min(ar,axis=0)
+    maxa = np.max(ar,axis=0)
+    diff = (maxa - mina)*0.5
+
+    # the center is just half way between the min and max xy
+    center = mina + diff
+
+    #get the 4 corners by subtracting and adding half the bounding boxes height and width to the center
+    corners = np.array([center+[-diff[0],-diff[1]],center+[diff[0],-diff[1]],center+[diff[0],diff[1]],center+[-diff[0],diff[1]],center+[-diff[0],-diff[1]]])
+
+    #use the the eigenvectors as a rotation matrix and
+    #rotate the corners and the centerback
+    corners = np.dot(corners,tvect)
+    center = np.dot(center,tvect)
+
+    return

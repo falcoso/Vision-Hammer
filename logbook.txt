@@ -141,3 +141,25 @@ Created a set of several related point clouds to try registering with open3d.
     floor in a scene is quite large. instead of just finding the largest plane
     the program will instead find the common floor direction vector and then
     find the plane closest to that direction.
+
+4/02/20
+    The segmentation is able to isolate everything on or above the table, and
+    align the table normal with the y-axis. Segmentation is then able to
+    pick out the model clusters as well as the building with models in it so
+    the focus has been to try and then extract the models from within the
+    building as we as reduce the dimensionality of the building (since it is
+    effectively a cut up box)
+
+    Following meeting on 31/1/20 the main focus has been to see whether a
+    histogram of the normals of the scenery item might produce the normals
+    since the normals of the models in the building could be considered noise.
+    Two approaches were taken, first just putting all the point normals into the
+    histogram, second region growing planes in the cluster and then putting
+    those normals into the histogram. While something close to the building axis
+    are produced, they are not consistent enough between models.
+
+    Since the y-axis of the model has already been found, a minimum bounding box
+    in the plane of the x-z axis should reduce be axis aligned with the walls.
+    https://geidav.wordpress.com/2014/01/23/computing-oriented-minimum-bounding-boxes-in-2d/
+    https://stackoverflow.com/questions/32892932/create-the-oriented-bounding-box-obb-with-python-and-numpy
+    https://www.sciencedirect.com/topics/computer-science/oriented-bounding-box
