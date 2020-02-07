@@ -22,10 +22,20 @@ crop_distance - Crops a cloud to everything less than <region> from the
 
 create_origin_plane - Creates plane aligned with origin and normal in y
     direction.
+
+fit_corner - Finds the equations of 2 perpendicular lines that fit an unlabelled
+    set of points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by
+    minimising least squares error.
+
+fit_corner2 - Finds the equations of 2 perpendicular lines that fit an
+    unlabelled set of points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found
+    by RANSAC and least squares.
 """
 
 import open3d as o3d
 import numpy as np
+import matplotlib.pyplot as plt
+from sklearn import linear_model
 
 
 def hist_normals(normals, bin_size=0.95):
@@ -241,33 +251,134 @@ def colour_labels(pcd, labels):
 
     return pcd
 
-def bounding_box_2d(points):
-    a  = np.array([(3.7, 1.7), (4.1, 3.8), (4.7, 2.9), (5.2, 2.8), (6.0,4.0), (6.3, 3.6), (9.7, 6.3), (10.0, 4.9), (11.0, 3.6), (12.5, 6.4)])
-    ca = np.cov(a,y = None,rowvar = 0,bias = 1)
+def fit_corner(pts, max_iter=30, tol=0.01):
+    """
+    Finds the equations of 2 perpendicular lines that fit an unlabelled set of
+    points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by minimising
+    least squares error.
 
-    v, vect = np.linalg.eig(ca)
-    tvect = np.transpose(vect)
+    Parameters
+    ----------
+    pts : np.array(m,2)
+        set of m 2d points to be fit
+    max_iter : int
+        Maximum number of iterations to carry out the fitting
+    tol : float < 1
+        Maximum percentage change in parameters in each loop before breaking
+        iteration early
 
+    Returns
+    -------
+    n : np.array(2)
+        2d array for vector equation
+    alpha : float
+        scalar for perpendicular line.
+    """
+    # put intitial intersection at centroid
+    mean_pts = np.mean(pts, axis=0)
+    R = np.array([[0, -1],  # 90 degree rotation matrix
+                  [1, 0]])
+    n = np.array([1., -1.]) # arbitrary starting vector
+    n /= np.linalg.norm(n)
+    dist = n.dot(mean_pts)  # scale to pass through points
+    n /= dist
+    alpha = R.dot(n).dot(mean_pts) # alpha scales second line
 
+    n1 = n
+    n2 = R.dot(n)/alpha
+    for i in range(max_iter):
+        # calculate distance to lines
+        l1 = np.abs(pts.dot(n1)-1)/np.linalg.norm(n1)
+        l2 = np.abs(pts.dot(n2)-1)/np.linalg.norm(n2)
 
-    #use the inverse of the eigenvectors as a rotation matrix and
-    #rotate the points so they align with the x and y axes
-    ar = np.dot(a,np.linalg.inv(tvect))
+        # get indexes closest to each line
+        ind1 = np.where(l2-l1 > 0)[0]
+        ind2 = np.where(l1-l2 > 0)[0]
 
-    # get the minimum and maximum x and y
-    mina = np.min(ar,axis=0)
-    maxa = np.max(ar,axis=0)
-    diff = (maxa - mina)*0.5
+        x1s = pts[ind1]
+        x2s = pts[ind2]
 
-    # the center is just half way between the min and max xy
-    center = mina + diff
+        n_old = n
+        n = np.sum(np.linalg.pinv(x1s), axis=1)
 
-    #get the 4 corners by subtracting and adding half the bounding boxes height and width to the center
-    corners = np.array([center+[-diff[0],-diff[1]],center+[diff[0],-diff[1]],center+[diff[0],diff[1]],center+[-diff[0],diff[1]],center+[-diff[0],-diff[1]]])
+        alpha_old = alpha
+        alpha = np.sum(x2s.dot(R.dot(n)))/len(x2s)
+        n1 = n
+        n2 = R.dot(n)/alpha
+        if abs(alpha_old-alpha)/alpha_old < tol and  \
+                abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
+            break
 
-    #use the the eigenvectors as a rotation matrix and
-    #rotate the corners and the centerback
-    corners = np.dot(corners,tvect)
-    center = np.dot(center,tvect)
+    plt.scatter(x1s[:,0], x1s[:,1])
+    plt.scatter(x2s[:,0], x2s[:,1])
+    return n, alpha
 
-    return
+def fit_corner2(pts, max_iter=1000, tol=0.001):
+    """
+    Finds the equations of 2 perpendicular lines that fit an unlabelled set of
+    points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
+    least squares.
+
+    Parameters
+    ----------
+    pts : np.array(m,2)
+        set of m 2d points to be fit
+    max_iter : int
+        Maximum number of iterations to carry out the fitting
+    tol : float < 1
+        Maximum percentage change in parameters in each loop before breaking
+        iteration early
+
+    Returns
+    -------
+    n : np.array(2)
+        2d array for vector equation
+    alpha : float
+        scalar for perpendicular line.
+    """
+    # put intitial intersection at centroid
+    mean_pts = np.mean(pts, axis=0)
+    R = np.array([[0, -1],  # 90 degree rotation matrix
+                  [1, 0]])
+    n = np.array([1., -1.]) # arbitrary starting vector
+    n /= np.linalg.norm(n)
+    dist = n.dot(mean_pts)  # scale to pass through points
+    n /= dist
+    alpha = R.dot(n).dot(mean_pts) # alpha scales second line
+    ransac = linear_model.RANSACRegressor()
+
+    n1 = n
+    n2 = R.dot(n)/alpha
+    for i in range(max_iter):
+        # calculate distance to lines
+        l1 = np.abs(pts.dot(n1)-1)/np.linalg.norm(n1)
+        l2 = np.abs(pts.dot(n2)-1)/np.linalg.norm(n2)
+
+        # get indexes closest to each line
+        ind1 = np.where(l2-l1 > 0)[0]
+        ind2 = np.where(l1-l2 > 0)[0]
+
+        x1s = pts[ind1]
+        x2s = pts[ind2]
+
+        n_old = n
+
+        x1 = x1s[:, 0].reshape(-1, 1)
+        y1 = x1s[:, 1].reshape(-1, 1)
+        ransac.fit(x1.reshape(-1, 1), y1)
+        n = np.array([ransac.estimator_.coef_, ransac.estimator_.intercept_])
+        n = n.flatten()
+        n = np.array([-n[0]/n[1], 1/n[1]])
+
+        alpha_old = alpha
+        alpha = np.sum(x2s.dot(R.dot(n)))/len(x2s)
+        n1 = n
+        n2 = R.dot(n)/alpha
+        if abs(alpha_old-alpha)/alpha_old < tol and  \
+                abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
+            print("Break Early")
+            break
+
+    plt.scatter(x1s[:,0], x1s[:,1])
+    plt.scatter(x2s[:,0], x2s[:,1])
+    return n, alpha

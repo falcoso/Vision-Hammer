@@ -163,3 +163,18 @@ Created a set of several related point clouds to try registering with open3d.
     https://geidav.wordpress.com/2014/01/23/computing-oriented-minimum-bounding-boxes-in-2d/
     https://stackoverflow.com/questions/32892932/create-the-oriented-bounding-box-obb-with-python-and-numpy
     https://www.sciencedirect.com/topics/computer-science/oriented-bounding-box
+
+7/02/20
+    Created algorithm that fits 2 perpendicular lines in a set of data in a form
+    of pseudo clustering/regression. The maths shown in written notes gives a
+    least squared solution for 1 line and then a scalar parameter that is used
+    to fit the other.
+
+    It seems odd that the vector direction ignores half of the points? Since it
+    only uses least squares for one of the lines it could be improved by doing a
+    RANSAC fit to that one line then calculate alpha as before to make it more
+    robust to outliers. Now moving on to testing on more examples.
+
+    Discovered for some lower angle point clouds the background is not
+    effectively removed from the main scene. Looking into clustering the table
+    plane and bounding box the largest section.
