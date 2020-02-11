@@ -36,6 +36,7 @@ import open3d as o3d
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn import linear_model
+from scipy import stats
 
 
 def hist_normals(normals, bin_size=0.95):
@@ -251,6 +252,7 @@ def colour_labels(pcd, labels):
 
     return pcd
 
+
 def fit_corner(pts, max_iter=30, tol=0.01):
     """
     Finds the equations of 2 perpendicular lines that fit an unlabelled set of
@@ -278,11 +280,19 @@ def fit_corner(pts, max_iter=30, tol=0.01):
     mean_pts = np.mean(pts, axis=0)
     R = np.array([[0, -1],  # 90 degree rotation matrix
                   [1, 0]])
-    n = np.array([1., -1.]) # arbitrary starting vector
+
+    # find initial line using RANSAC and align it to pass through centroid
+    x = pts[:, 0].reshape(-1, 1)
+    y = pts[:, 1].reshape(-1, 1)
+    ransac = linear_model.RANSACRegressor()
+    ransac.fit(x.reshape(-1, 1), y)
+    n = np.array([ransac.estimator_.coef_, ransac.estimator_.intercept_])
+    n = n.flatten()
+    n = np.array([-n[0]/n[1], 1/n[1]])
     n /= np.linalg.norm(n)
     dist = n.dot(mean_pts)  # scale to pass through points
     n /= dist
-    alpha = R.dot(n).dot(mean_pts) # alpha scales second line
+    alpha = R.dot(n).dot(mean_pts)  # alpha scales second line
 
     n1 = n
     n2 = R.dot(n)/alpha
@@ -292,8 +302,8 @@ def fit_corner(pts, max_iter=30, tol=0.01):
         l2 = np.abs(pts.dot(n2)-1)/np.linalg.norm(n2)
 
         # get indexes closest to each line
-        ind1 = np.where(l2-l1 > 0)[0]
-        ind2 = np.where(l1-l2 > 0)[0]
+        ind1 = np.where(l1 < l2)[0]
+        ind2 = np.where(l1 > l2)[0]
 
         x1s = pts[ind1]
         x2s = pts[ind2]
@@ -302,18 +312,19 @@ def fit_corner(pts, max_iter=30, tol=0.01):
         n = np.sum(np.linalg.pinv(x1s), axis=1)
 
         alpha_old = alpha
-        alpha = np.sum(x2s.dot(R.dot(n)))/len(x2s)
+        alpha = np.mean(x2s.dot(R.dot(n)))
         n1 = n
         n2 = R.dot(n)/alpha
         if abs(alpha_old-alpha)/alpha_old < tol and  \
                 abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
             break
 
-    plt.scatter(x1s[:,0], x1s[:,1])
-    plt.scatter(x2s[:,0], x2s[:,1])
+    plt.scatter(x1s[:, 0], x1s[:, 1])
+    plt.scatter(x2s[:, 0], x2s[:, 1])
     return n, alpha
 
-def fit_corner2(pts, max_iter=1000, tol=0.001):
+
+def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
     """
     Finds the equations of 2 perpendicular lines that fit an unlabelled set of
     points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
@@ -336,16 +347,32 @@ def fit_corner2(pts, max_iter=1000, tol=0.001):
     alpha : float
         scalar for perpendicular line.
     """
+    # define utility function for getting ransac results
+    def fit_ransac(x1s, ransac):
+        x1 = x1s[:, 0].reshape(-1, 1)
+        y1 = x1s[:, 1].reshape(-1, 1)
+        ransac.fit(x1, y1)
+        inliers1 = x1s[ransac.inlier_mask_]
+        n = np.array([ransac.estimator_.coef_, ransac.estimator_.intercept_])
+        n = n.flatten()
+        n = np.array([-n[0]/n[1], 1/n[1]])
+        return n, inliers1
+
     # put intitial intersection at centroid
     mean_pts = np.mean(pts, axis=0)
-    R = np.array([[0, -1],  # 90 degree rotation matrix
-                  [1, 0]])
-    n = np.array([1., -1.]) # arbitrary starting vector
-    n /= np.linalg.norm(n)
-    dist = n.dot(mean_pts)  # scale to pass through points
-    n /= dist
-    alpha = R.dot(n).dot(mean_pts) # alpha scales second line
+    R = np.array([[0., -1.],  # 90 degree rotation matrix
+                  [1., 0.]])
+
     ransac = linear_model.RANSACRegressor()
+    if n is None:
+        top = True
+        n = np.random.rand(2)  # arbitrary starting vector
+        n /= np.linalg.norm(n)
+        dist = n.dot(mean_pts)  # scale to pass through points
+        n /= dist
+        alpha = R.dot(n).dot(mean_pts)  # alpha scales second line
+    else:
+        top = False
 
     n1 = n
     n2 = R.dot(n)/alpha
@@ -355,30 +382,66 @@ def fit_corner2(pts, max_iter=1000, tol=0.001):
         l2 = np.abs(pts.dot(n2)-1)/np.linalg.norm(n2)
 
         # get indexes closest to each line
-        ind1 = np.where(l2-l1 > 0)[0]
-        ind2 = np.where(l1-l2 > 0)[0]
+        ind1 = np.where(l1 < l2)[0]
+        ind2 = np.where(l1 > l2)[0]
 
         x1s = pts[ind1]
         x2s = pts[ind2]
 
         n_old = n
 
-        x1 = x1s[:, 0].reshape(-1, 1)
-        y1 = x1s[:, 1].reshape(-1, 1)
-        ransac.fit(x1.reshape(-1, 1), y1)
-        n = np.array([ransac.estimator_.coef_, ransac.estimator_.intercept_])
-        n = n.flatten()
-        n = np.array([-n[0]/n[1], 1/n[1]])
+        try:
+            n, inliers1 = fit_ransac(x1s, ransac)
+            if len(x2s) == 0:
+                x2s = pts[ind1[np.logical_not(ransac.inlier_mask_)]]
+        except ValueError as e:
+            pass
 
         alpha_old = alpha
-        alpha = np.sum(x2s.dot(R.dot(n)))/len(x2s)
         n1 = n
-        n2 = R.dot(n)/alpha
+        alpha, inliers2in = ransac1d(x2s.dot(R.dot(n)), 3, len(x2s))
+        inliers2 = x2s[inliers2in]
+        if len(x1s) == 0:
+            x1s = np.delete(x2s, inliers2in, 0)
+            n, inliers1 = fit_ransac(x1s, ransac)
+
         if abs(alpha_old-alpha)/alpha_old < tol and  \
                 abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
-            print("Break Early")
             break
+        n2 = R.dot(n)/alpha
 
-    plt.scatter(x1s[:,0], x1s[:,1])
-    plt.scatter(x2s[:,0], x2s[:,1])
-    return n, alpha
+    c1 = inliers1.dot(n) - 1
+    c2 = inliers2.dot(R.dot(n))/alpha - 1
+    cost = c1.T.dot(c1) + c2.T.dot(c2)
+
+    # since solution is not symmetric, repeat with optimal n rotated and pick
+    # best fit
+    if top:
+        n_new, alpha_new, i, j, cost2 = fit_corner2(pts, n=R.dot(n), alpha=1/alpha)
+        if cost2 < cost:
+            return n_new, alpha_new, i, j, cost2
+
+    return n, alpha, ind1, ind2, cost
+
+
+def ransac1d(pts, min_samp, iter):
+    score_best = np.inf
+    alpha = 0.1
+    i = 0
+    for i in range(iter):
+        alpha = np.mean(np.random.choice(pts, min_samp))
+        mads = stats.median_absolute_deviation(pts)
+        residuals = np.abs(pts - alpha)
+        inliers = np.where(residuals < 3*mads)[0]
+        if len(inliers)/len(pts) < 0.6:
+            continue
+        score = np.linalg.norm(residuals[inliers])**2
+        if score < score_best:
+            score_best = score
+            inliers_best = inliers
+
+    try:
+        return np.mean(pts[inliers_best]), inliers
+    except UnboundLocalError as e:
+        print(pts)
+        raise e

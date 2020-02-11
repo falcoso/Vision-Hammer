@@ -21,7 +21,8 @@ remove_planes - Removes any planes from a scene.
 import open3d as o3d
 import numpy as np
 import utils
-import copy
+import scipy.spatial
+import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 from sklearn.cluster import DBSCAN
@@ -123,6 +124,7 @@ def region_grow(pcd, tol=0.95, find_planes=False):
 
         while len(ind) > 0:
             start_point = ind.pop()
+            print(start_point)
             # find it's nearest neighbour
             seeds = {start_point}
             plane = {start_point}
@@ -259,7 +261,7 @@ def isolate_model(pcd):
     return cl
 
 
-def segment(pcd, *args, **kwargs):
+def segment(pcd):
     """
     Segments a scene of a warhammer board and classified regions of interest.
 
@@ -267,10 +269,6 @@ def segment(pcd, *args, **kwargs):
     ----------
     pcd : open3d.geometry.PointCloud
         Point Cloud to segment
-    *args:
-        segment_plane *args
-    **kwargs:
-        segment_plane **kwargs
 
     Returns
     -------
@@ -308,6 +306,8 @@ def segment(pcd, *args, **kwargs):
     labels[plane] = np.max(labels)+1
     return labels, Normal
 
+def lines(x, n):
+    return 1/n[1] - n[0]*x/n[1]
 
 def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
     """
@@ -403,12 +403,31 @@ def matching(pcd, labels):
         matches = []
         if vol > np.max(ref_vols): # potentially item of scenery, cluster more finely
             print("Scenery cluster")
-            o3d.io.write_point_cloud("building.ply", cluster)
             points = np.asarray(cluster.points)
-            print(points)
             points = np.delete(points, 1, axis=1)
-            print(points)
-            o3d.visualization.draw_geometries([cluster, cluster.get_axis_aligned_bounding_box()])
+            points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
+            hull = scipy.spatial.ConvexHull(points[:,:2])
+            hull_pts = points[hull.vertices]
+            while len(hull_pts) < 50:
+                points = np.delete(points, hull.vertices, axis=0)
+                hull = scipy.spatial.ConvexHull(points[:,:2])
+                hull_pts =np.append(hull_pts, points[hull.vertices], axis=0)
+                x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(0.01)
+                hull_pts = np.asarray(x.points)
+            hull_pts = hull_pts[:,:2]
+
+            R = np.array([[0, -1],
+                          [1, 0]])
+            n, alpha, ind1, ind2, cost = utils.fit_corner2(hull_pts)
+            line_x = np.linspace(hull_pts[:, 0].min(), hull_pts[:, 0].max())
+            y1 = lines(line_x, n)
+            y2 = lines(line_x, R.dot(n)/alpha)
+            for i in [ind1, ind2]:
+                plt.scatter(hull_pts[i, 0], hull_pts[i,1])
+            plt.plot(line_x, y1)
+            plt.plot(line_x, y2)
+            plt.tight_layout()
+            plt.show()
 
         elif vol < 0.3*np.min(ref_vols):
             pass # not big enough to classify

@@ -178,3 +178,17 @@ Created a set of several related point clouds to try registering with open3d.
     Discovered for some lower angle point clouds the background is not
     effectively removed from the main scene. Looking into clustering the table
     plane and bounding box the largest section.
+
+10/02/20
+    The algorithm runs with limited success. The line allocation can definitely
+    be improved since we know its a corner we are looking for but its difficult
+    to characterise the selection in a clear way. The current solution may
+    potentially blow up if the line passes through the origin, but efforts to
+    re-formulate the problem using Lagrange multipliers has reached a brick wall
+    so checks on the solution need to be made. Similar efforts have also been
+    made in using homogenous coordinates.
+
+11/02/20
+    Have focussed on the RANSAC implementation and have been able to achieve
+    much more robust results on all the samples provided. Can now move to making
+    use of this to align the clouds closer.
