@@ -34,9 +34,13 @@ fit_corner2 - Finds the equations of 2 perpendicular lines that fit an
 
 import open3d as o3d
 import numpy as np
+import cmath
 import matplotlib.pyplot as plt
 from sklearn import linear_model
 from scipy import stats
+from scipy import special
+from itertools import combinations
+from copy import deepcopy
 
 
 def hist_normals(normals, bin_size=0.95):
@@ -392,18 +396,21 @@ def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
 
         try:
             n, inliers1 = fit_ransac(x1s, ransac)
-            if len(x2s) == 0:
-                x2s = pts[ind1[np.logical_not(ransac.inlier_mask_)]]
-        except ValueError as e:
+            if len(x2s) < 3:
+                x2s =np.append(x2s, pts[ind1[np.logical_not(ransac.inlier_mask_)]], axis=0)
+        except ValueError:
             pass
 
         alpha_old = alpha
         n1 = n
-        alpha, inliers2in = ransac1d(x2s.dot(R.dot(n)), 3, len(x2s))
+        alpha, inliers2in = ransac1d(x2s.dot(R.dot(n)), 3, 50)
         inliers2 = x2s[inliers2in]
-        if len(x1s) == 0:
-            x1s = np.delete(x2s, inliers2in, 0)
-            n, inliers1 = fit_ransac(x1s, ransac)
+        # error would have been raised above if this is true so new n has not
+        # been calculated
+        if len(x1s) < 3:
+            x1s = np.append(x1s, np.delete(x2s, inliers2in, 0), axis=0)
+            if len(x1s) >= 3:
+                n, inliers1 = fit_ransac(x1s, ransac)
 
         if abs(alpha_old-alpha)/alpha_old < tol and  \
                 abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
@@ -417,23 +424,87 @@ def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
     # since solution is not symmetric, repeat with optimal n rotated and pick
     # best fit
     if top:
-        n_new, alpha_new, i, j, cost2 = fit_corner2(pts, n=R.dot(n), alpha=1/alpha)
+        n_new, alpha_new, i, j, cost2 = fit_corner2(pts, n=R.dot(n)/alpha, alpha=np.linalg.norm(n)/alpha)
         if cost2 < cost:
-            return n_new, alpha_new, i, j, cost2
+            n = n_new
+            alpha = alpha_new
+            ind1 = i
+            ind2 = j
+            cost = cost2
+
+        # make sure vector points out
+        d = mean_pts.dot(np.array([n, R.dot(n)/alpha]))
+        print(d)
+
+        # if np.sum(np.sign(d)) < 0:
+        #     alpha *= -1
+        # if d[0] < 0:
+        #     n *= -1
+        #     alpha *= -1
+        # if d[1] < 0:
+        #     alpha *= -1
+
+        # set up return convention
+        return_set = [(n, alpha, ind1, ind2, cost),
+                      (R.dot(n)/alpha, -1/alpha, ind2, ind1, cost)]
+
+        n2 = R.dot(n)/alpha
+        intersection = np.linalg.inv(np.array([n, n2])).dot(np.ones(2))
+        pts_copy = deepcopy(pts)
+        pts_copy -=intersection
+        ang = np.zeros(2)
+        mean1 = np.mean(pts_copy[ind1], axis=0)
+        mean2 = np.mean(pts_copy[ind2], axis=0)
+        ang[0] = cmath.polar(complex(*mean1))[1]
+        ang[1] = cmath.polar(complex(*mean2))[1]
+
+        # origin is internal to the building
+        if ang.min() < 0 and ang.max() > 0 and ang.max() - ang.min() < 1.01*np.pi/2:
+            return return_set[np.argmin(ang)]
+        else:
+            for i in range(2):
+                if ang[i] < 0:
+                    ang[i] += 2*np.pi
+
+            return return_set[np.argmin(ang)]
+
 
     return n, alpha, ind1, ind2, cost
 
 
 def ransac1d(pts, min_samp, iter):
+    """
+    Returns the mean of the points calculated using RANSAC
+
+    Parameters
+    ----------
+    pts : np.array
+        1d array of data points
+    min_samp : int
+        Minimum number of points to calculate the mean from
+    iter : int
+        Number of iterations to test for.
+
+    Returns
+    -------
+    mean : float
+        The mean of the inliers in the data.
+    inliers : np.array(int)
+        Indicies of the inliers in the input points.
+    """
     score_best = np.inf
-    alpha = 0.1
-    i = 0
-    for i in range(iter):
-        alpha = np.mean(np.random.choice(pts, min_samp))
-        mads = stats.median_absolute_deviation(pts)
+
+    if special.comb(len(pts), min_samp, exact=True) < iter:
+        combs = combinations(pts, min_samp)
+        samples = np.mean(combs)
+    else:
+        samples = np.mean(np.random.choice(pts, (min_samp, iter)), axis=0)
+
+    mads = stats.median_absolute_deviation(pts)
+    for alpha in samples:
         residuals = np.abs(pts - alpha)
         inliers = np.where(residuals < 3*mads)[0]
-        if len(inliers)/len(pts) < 0.6:
+        if len(inliers)/len(pts) < 0.5:
             continue
         score = np.linalg.norm(residuals[inliers])**2
         if score < score_best:
@@ -442,6 +513,5 @@ def ransac1d(pts, min_samp, iter):
 
     try:
         return np.mean(pts[inliers_best]), inliers
-    except UnboundLocalError as e:
-        print(pts)
-        raise e
+    except UnboundLocalError:
+        return np.mean(pts), []

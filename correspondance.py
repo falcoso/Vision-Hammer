@@ -124,7 +124,6 @@ def region_grow(pcd, tol=0.95, find_planes=False):
 
         while len(ind) > 0:
             start_point = ind.pop()
-            print(start_point)
             # find it's nearest neighbour
             seeds = {start_point}
             plane = {start_point}
@@ -306,8 +305,10 @@ def segment(pcd):
     labels[plane] = np.max(labels)+1
     return labels, Normal
 
+
 def lines(x, n):
     return 1/n[1] - n[0]*x/n[1]
+
 
 def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
     """
@@ -364,7 +365,6 @@ def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
     dist = np.inf
     for plane, normal in zip(filtered_planes, filtered_norms):
         points = np.asarray(cl.points)[plane]
-        print(len(plane))
         if floor_vec.dot(normal) > 0.80:
             new_dist = np.mean(points.dot(normal))
             if abs(new_dist) < dist:
@@ -385,6 +385,57 @@ def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
     return cl
 
 
+def building_align(pcd, labels, norm):
+
+    # aign the table with horizontal
+    R = utils.align_vectors(norm, np.array([0, 1, 0]))
+    pcd.transform(R)
+    pcd.translate(-pcd.get_center())
+    table = np.where(labels == labels.max())[0]
+    points = np.asarray(pcd.points)
+    table_pts = points[table]
+    pcd.translate(np.array([0, -np.mean(table_pts, axis=0)[1], 0]))
+
+    building = 0
+    max_vol = 0
+    for i in range(labels.max()):  # note that this will go up to but not include table
+        cluster = np.where(labels == i)[0]
+        cluster = pcd.select_down_sample(cluster)
+        vol = cluster.get_oriented_bounding_box().volume()
+        # building will be largest cluster
+        if vol > max_vol:
+            max_vol = vol
+            building = cluster
+
+    # fit building corners
+    points = np.asarray(building.points)
+    points = np.delete(points, 1, axis=1)
+    points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
+    hull = scipy.spatial.ConvexHull(points[:, :2])
+    hull_pts = points[hull.vertices]
+    # iterate convex hulls until we have at least 50 points to fit
+    while len(hull_pts) < 50:
+        points = np.delete(points, hull.vertices, axis=0)
+        hull = scipy.spatial.ConvexHull(points[:, :2])
+        hull_pts = np.append(hull_pts, points[hull.vertices], axis=0)
+        x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(0.01)
+        hull_pts = np.asarray(x.points)
+    hull_pts = hull_pts[:, :2]
+
+    R = np.array([[0, -1],
+                  [1, 0]])
+    n, alpha, ind1, ind2, cost = utils.fit_corner2(hull_pts)
+    n2 = R.dot(n)/alpha
+    corner = np.sum(np.linalg.inv(np.array([n, n2])), axis=1)
+    corner = np.array([corner[0], 0, corner[1]])
+    n = np.array([n[0], 0, n[1]])
+    n /= np.linalg.norm(n)
+    R = utils.align_vectors(n, np.array([1, 0, 0]))
+    pcd.translate(-corner)
+    pcd.transform(R)
+    return pcd
+
+
 def matching(pcd, labels):
     # define fp to reference models
     refs = {}
@@ -401,36 +452,29 @@ def matching(pcd, labels):
 
         # first filter possible matches based on size
         matches = []
-        if vol > np.max(ref_vols): # potentially item of scenery, cluster more finely
+        if vol > np.max(ref_vols):  # potentially item of scenery, cluster more finely
             print("Scenery cluster")
             points = np.asarray(cluster.points)
             points = np.delete(points, 1, axis=1)
             points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
-            hull = scipy.spatial.ConvexHull(points[:,:2])
+            hull = scipy.spatial.ConvexHull(points[:, :2])
             hull_pts = points[hull.vertices]
+            # iterate convex hulls until we have at least 50 points to fit
             while len(hull_pts) < 50:
                 points = np.delete(points, hull.vertices, axis=0)
-                hull = scipy.spatial.ConvexHull(points[:,:2])
-                hull_pts =np.append(hull_pts, points[hull.vertices], axis=0)
-                x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(0.01)
+                hull = scipy.spatial.ConvexHull(points[:, :2])
+                hull_pts = np.append(hull_pts, points[hull.vertices], axis=0)
+                x = o3d.geometry.PointCloud(
+                    o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(0.01)
                 hull_pts = np.asarray(x.points)
-            hull_pts = hull_pts[:,:2]
+            hull_pts = hull_pts[:, :2]
 
             R = np.array([[0, -1],
                           [1, 0]])
             n, alpha, ind1, ind2, cost = utils.fit_corner2(hull_pts)
-            line_x = np.linspace(hull_pts[:, 0].min(), hull_pts[:, 0].max())
-            y1 = lines(line_x, n)
-            y2 = lines(line_x, R.dot(n)/alpha)
-            for i in [ind1, ind2]:
-                plt.scatter(hull_pts[i, 0], hull_pts[i,1])
-            plt.plot(line_x, y1)
-            plt.plot(line_x, y2)
-            plt.tight_layout()
-            plt.show()
 
         elif vol < 0.3*np.min(ref_vols):
-            pass # not big enough to classify
+            pass  # not big enough to classify
         else:
             for (key, cl), ref_vol in zip(refs.items(), ref_vols):
                 if vol <= ref_vol and vol > 0.3*ref_vol:
