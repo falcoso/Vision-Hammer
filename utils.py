@@ -432,18 +432,6 @@ def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
             ind2 = j
             cost = cost2
 
-        # make sure vector points out
-        d = mean_pts.dot(np.array([n, R.dot(n)/alpha]))
-        print(d)
-
-        # if np.sum(np.sign(d)) < 0:
-        #     alpha *= -1
-        # if d[0] < 0:
-        #     n *= -1
-        #     alpha *= -1
-        # if d[1] < 0:
-        #     alpha *= -1
-
         # set up return convention
         return_set = [(n, alpha, ind1, ind2, cost),
                       (R.dot(n)/alpha, -1/alpha, ind2, ind1, cost)]
@@ -459,14 +447,12 @@ def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         ang[1] = cmath.polar(complex(*mean2))[1]
 
         # origin is internal to the building
-        if ang.min() < 0 and ang.max() > 0 and ang.max() - ang.min() < 1.01*np.pi/2:
-            return return_set[np.argmin(ang)]
-        else:
+        if ang.min() > 0 or ang.max() < 0 or ang.max() - ang.min() > 1.01*np.pi/2:
             for i in range(2):
                 if ang[i] < 0:
                     ang[i] += 2*np.pi
 
-            return return_set[np.argmin(ang)]
+        return return_set[np.argmin(ang)]
 
 
     return n, alpha, ind1, ind2, cost
@@ -495,7 +481,7 @@ def ransac1d(pts, min_samp, iter):
     score_best = np.inf
 
     if special.comb(len(pts), min_samp, exact=True) < iter:
-        combs = combinations(pts, min_samp)
+        combs = np.array(combinations(pts, min_samp))
         samples = np.mean(combs)
     else:
         samples = np.mean(np.random.choice(pts, (min_samp, iter)), axis=0)

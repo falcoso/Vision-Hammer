@@ -260,6 +260,46 @@ def isolate_model(pcd):
     return cl
 
 
+def orient_refs(pcd):
+    # get table plane
+    planes_list, plane_normals = region_grow(pcd, find_planes=True)
+    labels = np.zeros(len(np.asarray(pcd.points)), dtype=int)
+    lab = 0
+    for i in planes_list:
+        labels[i] = lab
+        lab += 1
+
+    sizes = np.array([len(i) for i in planes_list])
+    Normal = -plane_normals[np.argmax(sizes)]
+    plane = planes_list[np.argmax(sizes)]
+    # Normal, plane = pcd.segment_plane(0.01, 20, 100)
+    # Normal *= -1
+    # Normal = Normal[:3]/np.linalg.norm(Normal[:3])
+
+    # get the distance of the plane so that everything below can be removed
+    dist = np.mean(np.asarray(pcd.points)[plane].dot(Normal))
+    n_dot = np.asarray(pcd.points).dot(Normal)-dist
+
+    # classify the scene based on the directions
+    plane = np.where(np.abs(n_dot) <= 0.01)[0]  # table itself
+
+    norm = Normal
+    R = utils.align_vectors(norm, np.array([0, 1, 0]))
+    pcd.transform(R)
+    R2 = np.identity(4)
+    R2[:3, -1] = -pcd.get_center()
+    R = R2.dot(R)
+    pcd.translate(-pcd.get_center())
+    table = plane
+    points = np.asarray(pcd.points)
+    table_pts = points[table]
+    R2 = np.identity(4)
+    R2[1, -1] = -np.mean(table_pts, axis=0)[1]
+    pcd.translate(np.array([0, -np.mean(table_pts, axis=0)[1], 0]))
+    R = R2.dot(R)
+    return R
+
+
 def segment(pcd):
     """
     Segments a scene of a warhammer board and classified regions of interest.
@@ -428,6 +468,10 @@ def building_align(pcd, labels, norm):
     n2 = R.dot(n)/alpha
     corner = np.sum(np.linalg.inv(np.array([n, n2])), axis=1)
     corner = np.array([corner[0], 0, corner[1]])
+
+    # ensures vectors point out from centroid of corner
+    if np.mean(hull_pts[ind1].dot(n)) < np.mean(hull_pts.dot(n)):
+        n *= -1
     n = np.array([n[0], 0, n[1]])
     n /= np.linalg.norm(n)
     R = utils.align_vectors(n, np.array([1, 0, 0]))

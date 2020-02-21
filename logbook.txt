@@ -192,3 +192,21 @@ Created a set of several related point clouds to try registering with open3d.
     Have focussed on the RANSAC implementation and have been able to achieve
     much more robust results on all the samples provided. Can now move to making
     use of this to align the clouds closer.
+
+18/02/20
+    Over the last week have been able to align all the clouds - the corner
+    finding provides an excellent initial global alignment with ICP can fine
+    tune. One of the clouds does keep appearing in the opposite quadrant so have
+    excluded that for now until I can sort out the return vector convention
+    fully.
+
+    Cropped down reference models and started working on sorting out an initial
+    orientation from which we can introduce the matching of the models.
+
+
+    check for ray marching, check threshold with proximity to points
+
+21/02/20
+    Fixed the orientation errors with one of the clouds. Global alignment is
+    very good, but to fine tune the ICP it needs to be done in a specific order
+    to work.
