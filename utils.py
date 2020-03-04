@@ -183,11 +183,11 @@ def crop_distance(pcd, region):
     return ind
 
 
-def create_origin_plane(size):
+def create_origin_plane(no_pts, radius):
     """Creates plane aligned with origin and normal in y direction"""
     plane = o3d.geometry.PointCloud()
-    x = np.linspace(-0.1, 0.1, size)
-    y = np.linspace(-0.1, 0.1, size)
+    x = np.linspace(-radius, radius, no_pts)
+    y = np.linspace(-radius, radius, no_pts)
     xv, yv = np.meshgrid(x, y)
     xv = xv.flatten()
     yv = yv.flatten()

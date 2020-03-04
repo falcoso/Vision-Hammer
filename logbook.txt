@@ -14,7 +14,7 @@
 
   Prices of the Realsense can vary upwards of £150, although a second hand
   v2 Kinect can go for as little as £40, comparisons online show less resolution
-  with the kinect but much fewer noise artifacts and therefore a clearer point
+  with the kinect but much fewer noise artefacts and therefore a clearer point
   cloud image.
 
   Kinect v2: 0.5m-4.5m
@@ -35,7 +35,7 @@ Created a set of several related point clouds to try registering with open3d.
   https://towardsdatascience.com/point-cloud-data-simple-approach-f3855fdc08f5
   Created some cleaner point clouds which are simply models on a table with
   blinds in the background. This makes registration a much simpler task. Also
-  looked at Colored Point Cloud Registration Revisited which makes use of the
+  looked at Coloured Point Cloud Registration Revisited which makes use of the
   fact that we have a colour image to overlay. Now need to look into how I can
   automatically clean up the data by removing outliers.
 
@@ -72,7 +72,7 @@ Created a set of several related point clouds to try registering with open3d.
   the individual models, removing all the background and scatter etc. (which
   works remarkably well!) the point cloud registration is very poor, and in fact
   makes the alignment worse. I have begun looking at a potential new algorithm
-  that treats colour as extra spacial dimensions for working out correspondence.
+  that treats colour as extra spatial dimensions for working out correspondence.
   Have also considered forcing a large known plane into the point cloud to help
   anchor the cloud.
 
@@ -101,7 +101,7 @@ Created a set of several related point clouds to try registering with open3d.
   re-computing.
 
   Created the combined meshes of the models using CloudCompare and aligning them
-  by hand. Have a full model of the Broadside and Commander but its very noisey
+  by hand. Have a full model of the Broadside and Commander but its very noisy
   so trying to create a mesh from them is hard. Ball Pivoting algorithm seems
   to provide good results, but it occasionally flips to internal surfaces which
   we don't want!
@@ -137,7 +137,7 @@ Created a set of several related point clouds to try registering with open3d.
     the table is isolated very effectively.
 
 28/01/20
-    Have updated how the table section is isolated, in case the veiw of the
+    Have updated how the table section is isolated, in case the view of the
     floor in a scene is quite large. instead of just finding the largest plane
     the program will instead find the common floor direction vector and then
     find the plane closest to that direction.
@@ -210,3 +210,37 @@ Created a set of several related point clouds to try registering with open3d.
     Fixed the orientation errors with one of the clouds. Global alignment is
     very good, but to fine tune the ICP it needs to be done in a specific order
     to work.
+
+24/02/20
+    Have implemented basic matching, carrying out ICP at 20 different initial
+    rotations about the origin. Digging deeper into the algorithm is appears
+    the odd angles are coming from a large number of points being considered
+    outliers so need to look into a way of fixing this. Scaling is currently
+    only implemented in the point to point algorithm, but this just shrinks
+    the cluster down very small and moves it to a dense section which isn't
+    helpful.
+
+25/02/20
+    Adding in floor plane doesn't seem to help with the registration for
+    matching. Have derived a potential expression for a constrained ICP that
+    will only allow translation and rotation about the y axis
+
+26/02/20
+    Had some issues with getting the maths to work for point to plane
+    constrained ICP, but point to point has a simply solution from the Proscutes
+    problem. The solution can be created by taking the SVD of the x and z
+    coordinates of the target points and the fit is remarkably good in some
+    cases. Now just need to play around with different initialisations, and then
+    it should be easy to cost up and work out what fits best.
+
+3/03/20
+    Tried experimenting with hard coding in the scaling to see if that improves
+    the fit results. From recognising the building the scale is determined but
+    the height of the other clusters doesn't seem to accurately match as well.
+
+4/03/20
+    Adding in outlier detection has greatly improved fit - cost function drops
+    by several orders of magnitude despite still using 90% of points in the
+    segmented cluster. The correct models have the best fit now, but depending
+    on whether hard scaling is used or not the actual transformation angle can
+    vary a lot.

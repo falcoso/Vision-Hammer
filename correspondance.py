@@ -20,11 +20,11 @@ remove_planes - Removes any planes from a scene.
 
 import open3d as o3d
 import numpy as np
+import scipy as sp
 import utils
-import scipy.spatial
-import matplotlib.pyplot as plt
 
 from tqdm import tqdm
+from copy import deepcopy
 from sklearn.cluster import DBSCAN
 
 
@@ -346,10 +346,6 @@ def segment(pcd):
     return labels, Normal
 
 
-def lines(x, n):
-    return 1/n[1] - n[0]*x/n[1]
-
-
 def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
     """
     Removes any planes from a scene.
@@ -451,12 +447,12 @@ def building_align(pcd, labels, norm):
     points = np.asarray(building.points)
     points = np.delete(points, 1, axis=1)
     points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
-    hull = scipy.spatial.ConvexHull(points[:, :2])
+    hull = sp.spatial.ConvexHull(points[:, :2])
     hull_pts = points[hull.vertices]
     # iterate convex hulls until we have at least 50 points to fit
     while len(hull_pts) < 50:
         points = np.delete(points, hull.vertices, axis=0)
-        hull = scipy.spatial.ConvexHull(points[:, :2])
+        hull = sp.spatial.ConvexHull(points[:, :2])
         hull_pts = np.append(hull_pts, points[hull.vertices], axis=0)
         x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(0.01)
         hull_pts = np.asarray(x.points)
@@ -501,12 +497,12 @@ def matching(pcd, labels):
             points = np.asarray(cluster.points)
             points = np.delete(points, 1, axis=1)
             points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
-            hull = scipy.spatial.ConvexHull(points[:, :2])
+            hull = sp.spatial.ConvexHull(points[:, :2])
             hull_pts = points[hull.vertices]
             # iterate convex hulls until we have at least 50 points to fit
             while len(hull_pts) < 50:
                 points = np.delete(points, hull.vertices, axis=0)
-                hull = scipy.spatial.ConvexHull(points[:, :2])
+                hull = sp.spatial.ConvexHull(points[:, :2])
                 hull_pts = np.append(hull_pts, points[hull.vertices], axis=0)
                 x = o3d.geometry.PointCloud(
                     o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(0.01)
@@ -527,3 +523,145 @@ def matching(pcd, labels):
             match_rate = np.zeros(len(matches))
             for match in matches:
                 cluster.translate(-cluster.get_center())
+
+
+def match_model(cluster, target):
+    cluster2 = deepcopy(cluster)
+    R = np.identity(4)
+    r = -cluster2.get_center()
+    R[0, -1] = r[0]
+    R[2, -1] = r[2]
+
+    # move cluster to central origin
+    cluster2.translate(np.array([r[0], 0, r[2]]))
+    t_points = np.asarray(target.points)
+    t_height = t_points[:, 1].max()-t_points[:, 1].min()
+    points = np.asarray(cluster2.points)
+    height = points[:, 1].max()-points[:, 1].min()
+
+    R[-1, -1] = height/t_height
+    cluster2 = cluster2.scale(t_height/height)
+    points = np.asarray(cluster2.points)
+    y_shift = points[:, 1].min()-t_points[:, 1].min()
+    R1 = np.identity(4)
+    R1[1, -1] = -y_shift
+    R = R1.dot(R)
+    cluster2.translate(np.array([0, -y_shift, 0]))
+    cluster2.estimate_normals()
+    o3d.visualization.draw_geometries([cluster2, target])
+    points = np.asarray(cluster2.points)
+
+    thetas = np.linspace(0, np.pi, 10)
+    rmse = np.inf
+    theta_best = 0
+    for theta in thetas:
+        # check if past convergence actually takes past curren theta
+        # if theta < theta_best:
+        #     pass
+
+        theta, cost = icp_constrained(cluster2, target, theta=theta)
+        if cost < rmse:
+            rmse = cost
+            theta_best = theta
+
+    print("BEST THETA {}".format(theta_best))
+    print("BEST COST {}".format(rmse))
+    # o3d.visualization.draw_geometries([target.voxel_down_sample(0.01), cluster2.transform(R2)])
+
+
+def icp_constrained(source, target, theta=0, iter=100, tol=0.01):
+    target_tree = o3d.geometry.KDTreeFlann(target)
+
+    def cost(theta, xs, ts):
+        xs = R(theta)[:3,:3].dot(xs.T).T
+        return np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
+
+
+    def R(theta):
+        return np.array([[np.cos(theta),  0, np.sin(theta), 0],
+                         [0,              1,             0, 0],
+                         [-np.sin(theta), 0, np.cos(theta), 0],
+                         [0,              0,             0, 1]])
+
+    def correspondance(theta, source, target):
+        source_c = deepcopy(source)
+        source_c.transform(R(theta))
+        source_tree = o3d.geometry.KDTreeFlann(source_c)
+        centroid = source_c.get_center()
+        k, id, _ = source_tree.search_knn_vector_3d(centroid, len(source_c.points))
+
+        dist_order = np.array(id[::-1], dtype=int)
+        ids = -np.ones(len(source_c.points), dtype=int)
+        for i in dist_order:
+            k, id, _ = target_tree.search_knn_vector_3d(source_c.points[i], 30)
+            id = np.asarray(id)
+            j = 0
+            try:
+                while id[j] in ids:
+                    j += 1
+                ids[i] = id[j]
+            except IndexError:
+                ids[i] = id[-1]
+
+        return ids
+
+    def get_inliers(source, target, ids):
+        source_c = deepcopy(source)
+        source_c.transform(R(theta))
+        xs = np.asarray(source_c.points)
+        ts = np.asarray(target.points)[ids]
+        residuals = np.abs(np.linalg.norm(xs-ts, axis=1))
+        mads = sp.stats.median_absolute_deviation(residuals)
+        inliers = np.where(np.abs(residuals-np.mean(residuals)) < 3*mads)[0]
+        return inliers
+
+    for i in range(iter):
+        # get correspondance
+        ids = correspondance(theta, source, target)
+
+        # filter outliers
+        inliers = get_inliers(source, target, ids)
+        xs = np.asarray(source.points)[inliers]
+        ts = np.asarray(target.points)[ids][inliers]
+
+        # print("Inliers: {}".format(len(inliers)/len(ids)))
+
+        # remove y axis to constrain transformation about that axis
+        xs = np.delete(xs, 1, axis=1)
+        ts = np.delete(ts, 1, axis=1)
+
+
+        # print("Fraction Inliers: {}".format(len(xs)/x_len))
+        R0 = (xs-np.mean(xs, axis=0)).T.dot(ts-np.mean(ts, axis=0))
+        u, s, v = np.linalg.svd(R0)
+        R0 = u.dot(v.T)
+
+        # catch numerical errors
+        r00 = R0[0,0]
+        if r00 > 1:
+            if r00 < 1 + 1E-10:
+                theta_new = 0
+            else:
+                raise RuntimeError("invalid value of cos(theta) calculated in SVD: {}".format(r00))
+        else:
+            theta_new = np.arccos(R0[0,0])
+
+        if abs(theta_new-theta) < abs(theta)*0.01:
+            break
+
+        theta = theta_new
+        xs = np.asarray(source.points)[inliers]
+        ts = np.asarray(target.points)[ids][inliers]
+
+        # print(cost(theta, xs, ts))
+
+    ids = correspondance(theta, source, target)
+
+    # filter outliers
+    inliers = get_inliers(source, target, ids)
+    xs = np.asarray(source.points)[inliers]
+    ts = np.asarray(target.points)[ids][inliers]
+
+    final_cost = cost(theta, xs, ts)
+    return theta, final_cost
+
