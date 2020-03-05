@@ -501,3 +501,19 @@ def ransac1d(pts, min_samp, iter):
         return np.mean(pts[inliers_best]), inliers
     except UnboundLocalError:
         return np.mean(pts), []
+
+def open_refs():
+    model_titles = ["Fireblade", "Fire Warrior", "Commander", "Broadside"]
+    models = {}
+    model_clouds = {}
+    print("Loading References...")
+    for model in model_titles:
+        tms = o3d.io.read_triangle_mesh("./Point Clouds/Photogram Refs/{}/texturedMesh.obj".format(model))
+        R = np.load("./Point Clouds/Photogram Refs/{}/R_scaling.npy".format(model))
+        tms.transform(R)
+        print(R[-1,-1])
+        models[model] = tms
+        model_clouds[model] = o3d.geometry.PointCloud(tms.vertices)
+        model_clouds[model].estimate_normals()
+
+    return models, model_clouds

@@ -318,6 +318,7 @@ def segment(pcd):
     Normal : numpy.array(3)
         3 dimensional unit vector for the normal of the table.
     """
+    plane_thresh=0.009
 
     # get table plane
     Normal, plane = pcd.segment_plane(0.005, 20, 100)
@@ -328,9 +329,9 @@ def segment(pcd):
     n_dot = np.asarray(pcd.points).dot(Normal)-dist
 
     # classify the scene based on the directions
-    plane = np.where(np.abs(n_dot) <= 0.01)[0]  # table itself
-    inliers = np.where(n_dot > 0.01)[0]         # everything above the table
-    outliers = np.where(n_dot < -0.01)[0]       # anything below the table
+    plane = np.where(np.abs(n_dot) <= plane_thresh)[0]  # table itself
+    inliers = np.where(n_dot > plane_thresh)[0]         # everything above the table
+    outliers = np.where(n_dot < -plane_thresh)[0]       # anything below the table
 
     # cluster all inliers
     cluster_model = DBSCAN(eps=0.1,
@@ -476,55 +477,6 @@ def building_align(pcd, labels, norm):
     return pcd
 
 
-def matching(pcd, labels):
-    # define fp to reference models
-    refs = {}
-    refs["Commander"] = o3d.io.read_point_cloud("./Point Clouds/Commander Ref.ply")
-    refs["Broadside"] = o3d.io.read_point_cloud("./Point Clouds/Broadside Ref.ply")
-    ref_vols = np.array([i.get_oriented_bounding_box().volume() for j, i in refs.items()])
-
-    # go through all clusters that have been labelled but not classified as
-    # outliers or the table plane
-    for i in range(labels.max()):  # note that this will go up to but not include table
-        cluster = np.where(labels == i)[0]
-        cluster = pcd.select_down_sample(cluster)
-        vol = cluster.get_oriented_bounding_box().volume()
-
-        # first filter possible matches based on size
-        matches = []
-        if vol > np.max(ref_vols):  # potentially item of scenery, cluster more finely
-            print("Scenery cluster")
-            points = np.asarray(cluster.points)
-            points = np.delete(points, 1, axis=1)
-            points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
-            hull = sp.spatial.ConvexHull(points[:, :2])
-            hull_pts = points[hull.vertices]
-            # iterate convex hulls until we have at least 50 points to fit
-            while len(hull_pts) < 50:
-                points = np.delete(points, hull.vertices, axis=0)
-                hull = sp.spatial.ConvexHull(points[:, :2])
-                hull_pts = np.append(hull_pts, points[hull.vertices], axis=0)
-                x = o3d.geometry.PointCloud(
-                    o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(0.01)
-                hull_pts = np.asarray(x.points)
-            hull_pts = hull_pts[:, :2]
-
-            R = np.array([[0, -1],
-                          [1, 0]])
-            n, alpha, ind1, ind2, cost = utils.fit_corner2(hull_pts)
-
-        elif vol < 0.3*np.min(ref_vols):
-            pass  # not big enough to classify
-        else:
-            for (key, cl), ref_vol in zip(refs.items(), ref_vols):
-                if vol <= ref_vol and vol > 0.3*ref_vol:
-                    matches.append(key)
-
-            match_rate = np.zeros(len(matches))
-            for match in matches:
-                cluster.translate(-cluster.get_center())
-
-
 def match_model(cluster, target):
     cluster2 = deepcopy(cluster)
     R = np.identity(4)
@@ -535,57 +487,57 @@ def match_model(cluster, target):
     # move cluster to central origin
     cluster2.translate(np.array([r[0], 0, r[2]]))
     t_points = np.asarray(target.points)
-    t_height = t_points[:, 1].max()-t_points[:, 1].min()
+    # t_height = t_points[:, 1].max()-t_points[:, 1].min()
+    # points = np.asarray(cluster2.points)
+    # height = points[:, 1].max()-points[:, 1].min()
+    #
+    # R[-1, -1] = height/t_height
+    # cluster2 = cluster2.scale(t_height/height)
     points = np.asarray(cluster2.points)
-    height = points[:, 1].max()-points[:, 1].min()
-
-    R[-1, -1] = height/t_height
-    cluster2 = cluster2.scale(t_height/height)
-    points = np.asarray(cluster2.points)
-    y_shift = points[:, 1].min()-t_points[:, 1].min()
+    y_shift = points[:, 1].max()-t_points[:, 1].max()
     R1 = np.identity(4)
-    R1[1, -1] = -y_shift
+    R1[1, -1] = -y_shift*0.5
+    # print("Y SHIFT: {}".format(y_shift))
     R = R1.dot(R)
-    cluster2.translate(np.array([0, -y_shift, 0]))
+    cluster2.translate(np.array([0, -y_shift*0.5, 0]))
     cluster2.estimate_normals()
-    o3d.visualization.draw_geometries([cluster2, target])
-    points = np.asarray(cluster2.points)
 
-    thetas = np.linspace(0, np.pi, 10)
+    thetas = np.linspace(0, 2*np.pi, 10)
     rmse = np.inf
-    theta_best = 0
-    for theta in thetas:
-        # check if past convergence actually takes past curren theta
-        # if theta < theta_best:
-        #     pass
-
-        theta, cost = icp_constrained(cluster2, target, theta=theta)
+    R_best = 0
+    for theta in tqdm(thetas):
+        R1, cost = icp_constrained(cluster2, target, theta=theta)
         if cost < rmse:
             rmse = cost
-            theta_best = theta
+            R_best = R1
 
-    print("BEST THETA {}".format(theta_best))
-    print("BEST COST {}".format(rmse))
-    # o3d.visualization.draw_geometries([target.voxel_down_sample(0.01), cluster2.transform(R2)])
+    # R_best[1,-1]=0
+    print("THETA BEST: {}".format(np.arccos(R_best[0, 0])))
+
+    R = R_best.dot(R)
+    cluster2 = deepcopy(cluster)
+    o3d.visualization.draw_geometries([cluster2.transform(R), target])
+    print("BEST RMSE: {}".format(rmse))
+    return R, rmse
 
 
-def icp_constrained(source, target, theta=0, iter=100, tol=0.01):
+def icp_constrained(source, target, theta=0, iter=30, tol=0.01):
     target_tree = o3d.geometry.KDTreeFlann(target)
+    y_shift = 0
 
     def cost(theta, xs, ts):
-        xs = R(theta)[:3,:3].dot(xs.T).T
+        xs = R(theta, y_shift)[:3, :3].dot(xs.T).T
         return np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
 
-
-    def R(theta):
+    def R(theta, y_shift):
         return np.array([[np.cos(theta),  0, np.sin(theta), 0],
-                         [0,              1,             0, 0],
+                         [0,              1,             0, y_shift],
                          [-np.sin(theta), 0, np.cos(theta), 0],
                          [0,              0,             0, 1]])
 
-    def correspondance(theta, source, target):
+    def correspondance(theta, y_shift, source, target):
         source_c = deepcopy(source)
-        source_c.transform(R(theta))
+        source_c.transform(R(theta, y_shift))
         source_tree = o3d.geometry.KDTreeFlann(source_c)
         centroid = source_c.get_center()
         k, id, _ = source_tree.search_knn_vector_3d(centroid, len(source_c.points))
@@ -593,58 +545,50 @@ def icp_constrained(source, target, theta=0, iter=100, tol=0.01):
         dist_order = np.array(id[::-1], dtype=int)
         ids = -np.ones(len(source_c.points), dtype=int)
         for i in dist_order:
-            k, id, _ = target_tree.search_knn_vector_3d(source_c.points[i], 30)
+            k, id, _ = target_tree.search_knn_vector_3d(source_c.points[i], 1)
             id = np.asarray(id)
-            j = 0
-            try:
-                while id[j] in ids:
-                    j += 1
-                ids[i] = id[j]
-            except IndexError:
-                ids[i] = id[-1]
+            ids[i] = id[0]
 
         return ids
 
-    def get_inliers(source, target, ids):
+    def get_inliers(theta, y_shift, source, target, ids):
         source_c = deepcopy(source)
-        source_c.transform(R(theta))
+        source_c.transform(R(theta, y_shift))
         xs = np.asarray(source_c.points)
         ts = np.asarray(target.points)[ids]
         residuals = np.abs(np.linalg.norm(xs-ts, axis=1))
         mads = sp.stats.median_absolute_deviation(residuals)
-        inliers = np.where(np.abs(residuals-np.mean(residuals)) < 3*mads)[0]
+        inliers = np.where(np.abs(residuals-np.median(residuals)) < 2*mads)[0]
         return inliers
 
     for i in range(iter):
         # get correspondance
-        ids = correspondance(theta, source, target)
+        ids = correspondance(theta, y_shift, source, target)
 
         # filter outliers
-        inliers = get_inliers(source, target, ids)
+        inliers = get_inliers(theta, y_shift, source, target, ids)
         xs = np.asarray(source.points)[inliers]
         ts = np.asarray(target.points)[ids][inliers]
-
-        # print("Inliers: {}".format(len(inliers)/len(ids)))
+        y_shift = -np.mean(ts[1]-xs[1])
+        # print(y_shift)
 
         # remove y axis to constrain transformation about that axis
         xs = np.delete(xs, 1, axis=1)
         ts = np.delete(ts, 1, axis=1)
 
-
-        # print("Fraction Inliers: {}".format(len(xs)/x_len))
         R0 = (xs-np.mean(xs, axis=0)).T.dot(ts-np.mean(ts, axis=0))
         u, s, v = np.linalg.svd(R0)
         R0 = u.dot(v.T)
 
         # catch numerical errors
-        r00 = R0[0,0]
+        r00 = R0[0, 0]
         if r00 > 1:
             if r00 < 1 + 1E-10:
                 theta_new = 0
             else:
                 raise RuntimeError("invalid value of cos(theta) calculated in SVD: {}".format(r00))
         else:
-            theta_new = np.arccos(R0[0,0])
+            theta_new = np.arccos(R0[0, 0])
 
         if abs(theta_new-theta) < abs(theta)*0.01:
             break
@@ -652,16 +596,15 @@ def icp_constrained(source, target, theta=0, iter=100, tol=0.01):
         theta = theta_new
         xs = np.asarray(source.points)[inliers]
         ts = np.asarray(target.points)[ids][inliers]
-
         # print(cost(theta, xs, ts))
 
-    ids = correspondance(theta, source, target)
+    # get final cost
+    ids = correspondance(theta, y_shift, source, target)
 
     # filter outliers
-    inliers = get_inliers(source, target, ids)
+    inliers = get_inliers(theta, y_shift, source, target, ids)
     xs = np.asarray(source.points)[inliers]
     ts = np.asarray(target.points)[ids][inliers]
 
     final_cost = cost(theta, xs, ts)
-    return theta, final_cost
-
+    return R(theta, y_shift), final_cost
