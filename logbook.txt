@@ -244,3 +244,9 @@ Created a set of several related point clouds to try registering with open3d.
     segmented cluster. The correct models have the best fit now, but depending
     on whether hard scaling is used or not the actual transformation angle can
     vary a lot.
+
+5/03/20
+    Added optimisation of the y translation. This provides much better
+    differentiation between right and wrong cost function, but fit could still
+    be more robust. Have found derivations of point to plane solution which
+    I will try along with x and z translations.
