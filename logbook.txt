@@ -227,7 +227,7 @@ Created a set of several related point clouds to try registering with open3d.
 
 26/02/20
     Had some issues with getting the maths to work for point to plane
-    constrained ICP, but point to point has a simply solution from the Proscutes
+    constrained ICP, but point to point has a simply solution from the Procrustes
     problem. The solution can be created by taking the SVD of the x and z
     coordinates of the target points and the fit is remarkably good in some
     cases. Now just need to play around with different initialisations, and then
@@ -248,5 +248,10 @@ Created a set of several related point clouds to try registering with open3d.
 5/03/20
     Added optimisation of the y translation. This provides much better
     differentiation between right and wrong cost function, but fit could still
-    be more robust. Have found derivations of point to plane solution which
-    I will try along with x and z translations.
+    be more robust. Have found derivations of point to plane solution, but
+    adding complete 3DOF in the translation gives near-perfect results so hasn't
+    been implemented.
+
+8/03/20
+    Created self-contained classes for processing the scene and easily accessing
+    models once they have been classified.

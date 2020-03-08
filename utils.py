@@ -218,18 +218,17 @@ def align_vectors(origin, target):
     cross = -np.cross(target, origin)
     cos_ang = target.dot(origin)
 
-    cross_skew = np.array([[0,         -cross[2], cross[1]],
+    cross_skew = np.array([[0,         -cross[2],  cross[1]],
                            [cross[2],  0,         -cross[0]],
-                           [-cross[1], cross[0],  0]])
+                           [-cross[1], cross[0],         0]])
 
     R = np.identity(3) + cross_skew + np.matmul(cross_skew, cross_skew) * \
         (1-cos_ang)/(np.linalg.norm(cross)**2)
 
-    R = np.array([[R[0][0], R[0][1], R[0][2], 0],
-                  [R[1][0], R[1][1], R[1][2], 0],
-                  [R[2][0], R[2][1], R[2][2], 0],
-                  [0,       0,       0,       1]])
-    return R
+    T = np.identity(4)
+
+    T[:-1, :-1] = R
+    return T
 
 
 def colour_labels(pcd, labels):
@@ -257,78 +256,7 @@ def colour_labels(pcd, labels):
     return pcd
 
 
-def fit_corner(pts, max_iter=30, tol=0.01):
-    """
-    Finds the equations of 2 perpendicular lines that fit an unlabelled set of
-    points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by minimising
-    least squares error.
-
-    Parameters
-    ----------
-    pts : np.array(m,2)
-        set of m 2d points to be fit
-    max_iter : int
-        Maximum number of iterations to carry out the fitting
-    tol : float < 1
-        Maximum percentage change in parameters in each loop before breaking
-        iteration early
-
-    Returns
-    -------
-    n : np.array(2)
-        2d array for vector equation
-    alpha : float
-        scalar for perpendicular line.
-    """
-    # put intitial intersection at centroid
-    mean_pts = np.mean(pts, axis=0)
-    R = np.array([[0, -1],  # 90 degree rotation matrix
-                  [1, 0]])
-
-    # find initial line using RANSAC and align it to pass through centroid
-    x = pts[:, 0].reshape(-1, 1)
-    y = pts[:, 1].reshape(-1, 1)
-    ransac = linear_model.RANSACRegressor()
-    ransac.fit(x.reshape(-1, 1), y)
-    n = np.array([ransac.estimator_.coef_, ransac.estimator_.intercept_])
-    n = n.flatten()
-    n = np.array([-n[0]/n[1], 1/n[1]])
-    n /= np.linalg.norm(n)
-    dist = n.dot(mean_pts)  # scale to pass through points
-    n /= dist
-    alpha = R.dot(n).dot(mean_pts)  # alpha scales second line
-
-    n1 = n
-    n2 = R.dot(n)/alpha
-    for i in range(max_iter):
-        # calculate distance to lines
-        l1 = np.abs(pts.dot(n1)-1)/np.linalg.norm(n1)
-        l2 = np.abs(pts.dot(n2)-1)/np.linalg.norm(n2)
-
-        # get indexes closest to each line
-        ind1 = np.where(l1 < l2)[0]
-        ind2 = np.where(l1 > l2)[0]
-
-        x1s = pts[ind1]
-        x2s = pts[ind2]
-
-        n_old = n
-        n = np.sum(np.linalg.pinv(x1s), axis=1)
-
-        alpha_old = alpha
-        alpha = np.mean(x2s.dot(R.dot(n)))
-        n1 = n
-        n2 = R.dot(n)/alpha
-        if abs(alpha_old-alpha)/alpha_old < tol and  \
-                abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
-            break
-
-    plt.scatter(x1s[:, 0], x1s[:, 1])
-    plt.scatter(x2s[:, 0], x2s[:, 1])
-    return n, alpha
-
-
-def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
+def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
     """
     Finds the equations of 2 perpendicular lines that fit an unlabelled set of
     points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
@@ -397,7 +325,7 @@ def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         try:
             n, inliers1 = fit_ransac(x1s, ransac)
             if len(x2s) < 3:
-                x2s =np.append(x2s, pts[ind1[np.logical_not(ransac.inlier_mask_)]], axis=0)
+                x2s = np.append(x2s, pts[ind1[np.logical_not(ransac.inlier_mask_)]], axis=0)
         except ValueError:
             pass
 
@@ -424,7 +352,8 @@ def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
     # since solution is not symmetric, repeat with optimal n rotated and pick
     # best fit
     if top:
-        n_new, alpha_new, i, j, cost2 = fit_corner2(pts, n=R.dot(n)/alpha, alpha=np.linalg.norm(n)/alpha)
+        n_new, alpha_new, i, j, cost2 = fit_corner(pts, n=R.dot(n)/alpha,
+                                                   alpha=np.linalg.norm(n)/alpha)
         if cost2 < cost:
             n = n_new
             alpha = alpha_new
@@ -439,7 +368,7 @@ def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         n2 = R.dot(n)/alpha
         intersection = np.linalg.inv(np.array([n, n2])).dot(np.ones(2))
         pts_copy = deepcopy(pts)
-        pts_copy -=intersection
+        pts_copy -= intersection
         ang = np.zeros(2)
         mean1 = np.mean(pts_copy[ind1], axis=0)
         mean2 = np.mean(pts_copy[ind2], axis=0)
@@ -453,7 +382,6 @@ def fit_corner2(pts, max_iter=500, tol=0.01, n=None, alpha=None):
                     ang[i] += 2*np.pi
 
         return return_set[np.argmin(ang)]
-
 
     return n, alpha, ind1, ind2, cost
 
@@ -502,18 +430,142 @@ def ransac1d(pts, min_samp, iter):
     except UnboundLocalError:
         return np.mean(pts), []
 
+
 def open_refs():
     model_titles = ["Fireblade", "Fire Warrior", "Commander", "Broadside"]
     models = {}
-    model_clouds = {}
-    print("Loading References...")
     for model in model_titles:
-        tms = o3d.io.read_triangle_mesh("./Point Clouds/Photogram Refs/{}/texturedMesh.obj".format(model))
+        tms = o3d.io.read_triangle_mesh(
+            "./Point Clouds/Photogram Refs/{}/texturedMesh.obj".format(model))
         R = np.load("./Point Clouds/Photogram Refs/{}/R_scaling.npy".format(model))
         tms.transform(R)
-        print(R[-1,-1])
         models[model] = tms
-        model_clouds[model] = o3d.geometry.PointCloud(tms.vertices)
-        model_clouds[model].estimate_normals()
 
-    return models, model_clouds
+    build_ref = o3d.io.read_triangle_mesh("./Point Clouds/Building Ref.ply")
+    points = np.asarray(build_ref.vertices)
+    height = points[:, 1].max()-points[:, 1].min()
+    scale_factor = 20/height  # height of building
+    build_ref.scale(scale_factor, center=False)
+    build_ref.compute_triangle_normals()
+    build_ref.compute_vertex_normals()
+    models["Building"] = build_ref
+    return models
+
+
+def icp_constrained(source, target, theta=0, iter=30, tol=0.005):
+    """
+    Point to point iterative closest point, constrained to rotate about the
+    y-axis.
+
+    Parameters
+    ----------
+    source : o3d.geometry.PointCloud
+        Point cloud that will be rotated to best fit.
+    target : o3d.geometry.PointCloud
+        Point cloud to which source will be matched
+    theta : float
+        Initial rotation about y-axis to start fitting in radians.
+    iter : int
+        Maximum number of iterations.
+    tol : float
+        Percentage change in theta between iterations below which iteration
+        stops.
+
+    Returns
+    -------
+    R : np.array(4x4)
+        4x4 transformation matrix.
+    final_cost : float
+        Cost per point of the given transformation.
+    """
+    target_tree = o3d.geometry.KDTreeFlann(target)
+    trans = np.zeros(3)
+
+    def cost(theta, trans, xs, ts):
+        """Calculates cost function of given correspondance."""
+        xs = R(theta, trans)[:3, :3].dot(xs.T).T
+        return np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
+
+    def R(theta, trans):
+        """Generates rotation matrix of angle theta, translating trans."""
+        R0 = np.array([[np.cos(theta),  0, np.sin(theta), 0],
+                       [0,              1,             0, 0],
+                       [-np.sin(theta), 0, np.cos(theta), 0],
+                       [0,              0,             0, 1]])
+
+        R0[:3, -1] = trans
+        return R0
+
+    def correspondance(theta, trans, source, target):
+        """Picks correspondance under current transformation."""
+        source_c = deepcopy(source)
+        source_c.transform(R(theta, trans))
+        source_tree = o3d.geometry.KDTreeFlann(source_c)
+        centroid = source_c.get_center()
+        k, id, _ = source_tree.search_knn_vector_3d(centroid, len(source_c.points))
+
+        dist_order = np.array(id[::-1], dtype=int)
+        ids = -np.ones(len(source_c.points), dtype=int)
+        for i in dist_order:
+            k, id, _ = target_tree.search_knn_vector_3d(source_c.points[i], 1)
+            id = np.asarray(id)
+            ids[i] = id[0]
+
+        return ids
+
+    def get_inliers(theta, trans, source, target, ids):
+        """Filters points more than 2*mad from the median."""
+        source_c = deepcopy(source)
+        source_c.transform(R(theta, trans))
+        xs = np.asarray(source_c.points)
+        ts = np.asarray(target.points)[ids]
+        residuals = np.abs(np.linalg.norm(xs-ts, axis=1))
+        mads = stats.median_absolute_deviation(residuals)
+        inliers = np.where(np.abs(residuals-np.median(residuals)) < 2*mads)[0]
+        return inliers
+
+    for i in range(iter):
+        # get correspondance
+        ids = correspondance(theta, trans, source, target)
+
+        # filter outliers
+        inliers = get_inliers(theta, trans, source, target, ids)
+        xs = np.asarray(source.points)[inliers]
+        ts = np.asarray(target.points)[ids][inliers]
+        trans = np.mean(xs-ts, axis=0)
+
+        # remove y axis to constrain transformation about that axis
+        xs = np.delete(xs, 1, axis=1)
+        ts = np.delete(ts, 1, axis=1)
+
+        R0 = (xs-np.mean(xs, axis=0)).T.dot(ts-np.mean(ts, axis=0))
+        u, s, v = np.linalg.svd(R0)
+        R0 = u.dot(v.T)
+
+        # catch numerical errors
+        r00 = R0[0, 0]
+        if r00 > 1:
+            if r00 < 1 + 1E-10:
+                theta_new = 0
+            else:
+                raise RuntimeError("invalid value of cos(theta) calculated in SVD: {}".format(r00))
+        else:
+            theta_new = np.arccos(R0[0, 0])
+
+        if abs(theta_new-theta) < abs(theta)*tol:
+            break
+
+        theta = theta_new
+        xs = np.asarray(source.points)[inliers]
+        ts = np.asarray(target.points)[ids][inliers]
+
+    # get final cost
+    ids = correspondance(theta, trans, source, target)
+
+    # filter outliers
+    inliers = get_inliers(theta, trans, source, target, ids)
+    xs = np.asarray(source.points)[inliers]
+    ts = np.asarray(target.points)[ids][inliers]
+
+    final_cost = cost(theta, trans, xs, ts)
+    return R(theta, trans), final_cost

@@ -319,7 +319,7 @@ def segment(pcd):
     Normal : numpy.array(3)
         3 dimensional unit vector for the normal of the table.
     """
-    plane_thresh=0.009
+    plane_thresh = 0.009
 
     # get table plane
     Normal, plane = pcd.segment_plane(0.005, 20, 100)
@@ -424,6 +424,25 @@ def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
 
 
 def building_align(pcd, labels, norm):
+    """
+    Aligns the corner of the building with the principle axis at the origin.
+
+    Parameters
+    ----------
+    pcd : o3d.geometry.PointCloud
+        Scene containing building.
+    labels : numpy.array(int)
+        integer label for classifying each point. -1 are outliers, max value
+        is the table.
+    norm : numpy.array(3)
+        3 dimensional unit vector for the normal of the table.
+
+    Returns
+    -------
+    pcd : o3d.geometry.PointCloud
+        Aligned point cloud.
+
+    """
 
     # aign the table with horizontal
     R = utils.align_vectors(norm, np.array([0, 1, 0]))
@@ -434,6 +453,7 @@ def building_align(pcd, labels, norm):
     table_pts = points[table]
     pcd.translate(np.array([0, -np.mean(table_pts, axis=0)[1], 0]))
 
+    # find the building cluster
     building = 0
     max_vol = 0
     for i in range(labels.max()):  # note that this will go up to but not include table
@@ -446,11 +466,13 @@ def building_align(pcd, labels, norm):
             building = cluster
 
     # fit building corners
+    # Project points onto x-z plane
     points = np.asarray(building.points)
     points = np.delete(points, 1, axis=1)
     points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
     hull = sp.spatial.ConvexHull(points[:, :2])
     hull_pts = points[hull.vertices]
+
     # iterate convex hulls until we have at least 50 points to fit
     while len(hull_pts) < 50:
         points = np.delete(points, hull.vertices, axis=0)
@@ -462,7 +484,7 @@ def building_align(pcd, labels, norm):
 
     R = np.array([[0, -1],
                   [1, 0]])
-    n, alpha, ind1, ind2, cost = utils.fit_corner2(hull_pts)
+    n, alpha, ind1, ind2, cost = utils.fit_corner(hull_pts)
     n2 = R.dot(n)/alpha
     corner = np.sum(np.linalg.inv(np.array([n, n2])), axis=1)
     corner = np.array([corner[0], 0, corner[1]])
@@ -477,13 +499,59 @@ def building_align(pcd, labels, norm):
     pcd.transform(R)
     return pcd
 
+def match_model(clusters, models):
+    model_clouds = {}
+    for key, mesh in models.items():
+        model_clouds[key] = o3d.geometry.PointCloud(mesh.vertices).voxel_down_sample(0.1)
 
-def match_model(cluster, target):
+    ref_vols = np.array([i.get_oriented_bounding_box().volume() for j, i in model_clouds.items()])
+
+    result = []
+    for cluster in clusters:
+        vol = cluster.get_oriented_bounding_box().volume()
+        matches = []
+        for (key, cl), ref_vol in zip(models.items(), ref_vols):
+            if vol > 0.1*ref_vol and 1.5*ref_vol > vol:
+                matches.append(key)
+
+        rmse_best = np.inf
+        for i in matches:
+            R, rmse = match_to_model(cluster, model_clouds[i])
+            if rmse < rmse_best:
+                rmse_best = rmse
+                R_best = R
+                match_best = i
+
+        result.append((match_best, R_best))
+
+    if len(clusters) == 1:
+        return result[0]
+
+    return result
+
+
+def match_to_model(cluster, target):
+    """
+    Finds the best alignment of the cluster to a possible target.
+
+    Parameters
+    ----------
+    cluster : o3d.geometry.PointCloud
+        Point cloud to be matched
+    target : o3d.geometry.PointCloud
+        Match candidate.
+
+    Returns
+    -------
+    R : np.array(4x4)
+        4x4 transformation matrix.
+    final_cost : float
+        Cost per point of the given transformation.
+    """
     cluster2 = deepcopy(cluster)
     R = np.identity(4)
     r = -cluster2.get_center()
-    R[0, -1] = r[0]
-    R[2, -1] = r[2]
+    R[:3, -1] = r
 
     # move cluster to central origin
     t_points = np.asarray(target.points)
@@ -496,7 +564,7 @@ def match_model(cluster, target):
     thetas = np.linspace(0, 2*np.pi, 10)
     rmse = np.inf
     for theta in tqdm(thetas):
-        R1, cost = icp_constrained(cluster2, target, theta=theta)
+        R1, cost = utils.icp_constrained(cluster2, target, theta=theta)
         if cost < rmse:
             rmse = cost
             R_best = R1
@@ -504,94 +572,3 @@ def match_model(cluster, target):
     R = R_best.dot(R)
     cluster2 = deepcopy(cluster)
     return R, rmse
-
-
-def icp_constrained(source, target, theta=0, iter=30, tol=0.01):
-    target_tree = o3d.geometry.KDTreeFlann(target)
-    trans = np.zeros(3)
-
-    def cost(theta, xs, ts):
-        xs = R(theta, trans)[:3, :3].dot(xs.T).T
-        return np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
-
-    def R(theta, trans):
-        R0 = np.array([[np.cos(theta),  0, np.sin(theta), 0],
-                       [0,              1,             0, 0],
-                       [-np.sin(theta), 0, np.cos(theta), 0],
-                       [0,              0,             0, 1]])
-
-        R0[:3,-1] = trans
-        return R0
-
-    def correspondance(theta, trans, source, target):
-        source_c = deepcopy(source)
-        source_c.transform(R(theta, trans))
-        source_tree = o3d.geometry.KDTreeFlann(source_c)
-        centroid = source_c.get_center()
-        k, id, _ = source_tree.search_knn_vector_3d(centroid, len(source_c.points))
-
-        dist_order = np.array(id[::-1], dtype=int)
-        ids = -np.ones(len(source_c.points), dtype=int)
-        for i in dist_order:
-            k, id, _ = target_tree.search_knn_vector_3d(source_c.points[i], 1)
-            id = np.asarray(id)
-            ids[i] = id[0]
-
-        return ids
-
-    def get_inliers(theta, trans, source, target, ids):
-        source_c = deepcopy(source)
-        source_c.transform(R(theta, trans))
-        xs = np.asarray(source_c.points)
-        ts = np.asarray(target.points)[ids]
-        residuals = np.abs(np.linalg.norm(xs-ts, axis=1))
-        mads = sp.stats.median_absolute_deviation(residuals)
-        inliers = np.where(np.abs(residuals-np.median(residuals)) < 2*mads)[0]
-        return inliers
-
-    for i in range(iter):
-        # get correspondance
-        ids = correspondance(theta, trans, source, target)
-
-        # filter outliers
-        inliers = get_inliers(theta, trans, source, target, ids)
-        xs = np.asarray(source.points)[inliers]
-        ts = np.asarray(target.points)[ids][inliers]
-        trans = np.mean(xs-ts, axis=0)
-
-        # remove y axis to constrain transformation about that axis
-        xs = np.delete(xs, 1, axis=1)
-        ts = np.delete(ts, 1, axis=1)
-
-        R0 = (xs-np.mean(xs, axis=0)).T.dot(ts-np.mean(ts, axis=0))
-        u, s, v = np.linalg.svd(R0)
-        R0 = u.dot(v.T)
-
-        # catch numerical errors
-        r00 = R0[0, 0]
-        if r00 > 1:
-            if r00 < 1 + 1E-10:
-                theta_new = 0
-            else:
-                raise RuntimeError("invalid value of cos(theta) calculated in SVD: {}".format(r00))
-        else:
-            theta_new = np.arccos(R0[0, 0])
-
-        if abs(theta_new-theta) < abs(theta)*0.005:
-            break
-
-        theta = theta_new
-        xs = np.asarray(source.points)[inliers]
-        ts = np.asarray(target.points)[ids][inliers]
-        # print(cost(theta, xs, ts))
-
-    # get final cost
-    ids = correspondance(theta, trans, source, target)
-
-    # filter outliers
-    inliers = get_inliers(theta, trans, source, target, ids)
-    xs = np.asarray(source.points)[inliers]
-    ts = np.asarray(target.points)[ids][inliers]
-
-    final_cost = cost(theta, xs, ts)
-    return R(theta, trans), final_cost
