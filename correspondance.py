@@ -335,7 +335,7 @@ def segment(pcd):
     outliers = np.where(n_dot < -plane_thresh)[0]       # anything below the table
 
     # cluster all inliers
-    cluster_model = DBSCAN(eps=0.1,
+    cluster_model = DBSCAN(eps=0.05,
                            min_samples=50,
                            n_jobs=-1).fit(np.asarray(pcd.points)[inliers])
     cluster_labels = cluster_model.labels_
@@ -515,6 +515,8 @@ def match_model(clusters, models):
                 matches.append(key)
 
         rmse_best = np.inf
+        match_best = None
+        R_best = np.identity(4)
         for i in matches:
             R, rmse = match_to_model(cluster, model_clouds[i])
             if rmse < rmse_best:
