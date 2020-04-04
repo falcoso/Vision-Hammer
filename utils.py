@@ -35,11 +35,8 @@ fit_corner2 - Finds the equations of 2 perpendicular lines that fit an
 import open3d as o3d
 import numpy as np
 import cmath
-import matplotlib.pyplot as plt
 from sklearn import linear_model
 from scipy import stats
-from scipy import special
-from itertools import combinations
 from copy import deepcopy
 
 
@@ -250,6 +247,7 @@ def colour_labels(pcd, labels):
     """
 
     colours = np.random.rand(labels.max()+1-labels.min(), 3)
+    colours[-1] = np.array([0,0,0])
     for i in range(len(labels)):
         pcd.colors[i] = colours[labels[i]]
 
@@ -408,11 +406,11 @@ def ransac1d(pts, min_samp, iter):
     """
     score_best = np.inf
 
-    if special.comb(len(pts), min_samp, exact=True) < iter:
-        combs = np.array(combinations(pts, min_samp))
-        samples = np.mean(combs)
-    else:
-        samples = np.mean(np.random.choice(pts, (min_samp, iter)), axis=0)
+    # if special.comb(len(pts), min_samp, exact=True) < iter:
+    #     combs = np.array(combinations(pts, min_samp))
+    #     samples = np.mean(combs)
+    # else:
+    samples = np.mean(np.random.choice(pts, (min_samp, iter)), axis=0)
 
     mads = stats.median_absolute_deviation(pts)
     for alpha in samples:

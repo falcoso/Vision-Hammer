@@ -39,6 +39,8 @@ class Scene:
     -------
     show_scene(self): Displays all models in the scene.
     show_top_view(self): Displays a birds-eye view of the objects in the scene.
+    show_cloud(self, colour_labels=False):
+        Shows the original point cloud of the scene.
 
     """
     buidling_height = 20  # cm
@@ -46,7 +48,7 @@ class Scene:
 
     def __init__(self, cloud, building=True):
         # generate labels
-        labels, norm = corr.segment(cloud)
+        self.labels, norm = corr.segment(cloud)
         self.cloud = cloud
 
         # align building with origin
@@ -57,8 +59,8 @@ class Scene:
         building_label = -1
         self.building = None
         if building is True:
-            for i in range(labels.max()):  # note that this will go up to but not include table
-                cluster = np.where(labels == i)[0]
+            for i in range(self.labels.max()):  # note that this will go up to but not include table
+                cluster = np.where(self.labels == i)[0]
                 cluster = self.cloud.select_down_sample(cluster)
                 vol = cluster.get_oriented_bounding_box().volume()
                 # building will be largest cluster
@@ -84,21 +86,23 @@ class Scene:
             R = utils.align_vectors(norm, np.array([0, 1, 0]))
             self.cloud.transform(R)
             self.cloud.translate(-self.cloud.get_center())
-            table = np.where(labels == labels.max())[0]
+            table = np.where(self.labels == self.labels.max())[0]
             points = np.asarray(self.cloud.points)
             table_pts = points[table]
             self.cloud.translate(np.array([0, -np.mean(table_pts, axis=0)[1], 0]))
 
         self.cloud.scale(Scene.scale_factor, center=False)
-        model_labels = [i for i in range(labels.max()) if i != building_label]
-        targets = [self.cloud.select_down_sample(np.where(labels == i)[0]) for i in model_labels]
+        model_labels = [i for i in range(self.labels.max()) if i != building_label]
+        targets = [self.cloud.select_down_sample(np.where(self.labels == i)[0])
+                   for i in model_labels]
 
         self.minis = []
         for i in range(len(targets)):
             print("Fitting {} of {} targets...".format(i+1, len(targets)))
             self.minis.append(Model(targets[i]))
 
-        self.cloud = self.cloud.select_down_sample(np.where(labels != -1)[0])
+        self.cloud = self.cloud.select_down_sample(np.where(self.labels != -1)[0])
+        self.labels = self.labels[np.where(self.labels != -1)[0]]
         return
 
     def show_scene(self):
@@ -108,6 +112,20 @@ class Scene:
             figures.append(self.building.get_geometry())
         o3d.visualization.draw_geometries(figures)
         return
+
+    def show_cloud(self, colour_labels=False):
+        """
+        Shows the original point cloud of the scene.
+
+        Parameters
+        ----------
+        colour_labels : bool (=False)
+            If true, cloud is coloured based on the labels for the cloud.
+        """
+        cloud = copy.deepcopy(self.cloud)
+        if colour_labels:
+            cloud = utils.colour_labels(cloud, self.labels)
+        o3d.visualization.draw_geometries([cloud])
 
     def show_top_view(self):
         """Displays a birds-eye view of the objects in the scene."""

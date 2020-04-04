@@ -22,7 +22,6 @@ import open3d as o3d
 import numpy as np
 import scipy as sp
 import utils
-import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 from copy import deepcopy
@@ -319,7 +318,7 @@ def segment(pcd):
     Normal : numpy.array(3)
         3 dimensional unit vector for the normal of the table.
     """
-    plane_thresh = 0.009
+    plane_thresh = 0.01
 
     # get table plane
     Normal, plane = pcd.segment_plane(0.005, 20, 100)
@@ -500,19 +499,48 @@ def building_align(pcd, labels, norm):
     return pcd
 
 def match_model(clusters, models):
+    """
+    Finds the best matching models to a set of clusters.
+
+    Parameters
+    ----------
+    clusters : list(open3d.geometry.PointCloud)
+        List of point clouds to which a model is to be matched.
+    models : dict {str: open3d.geometry.PointCloud}
+        Dictionary of reference clouds to which the clusters are to be matched
+        to.
+
+    Returns
+    -------
+    results : list [(str, np.array(4x4))]
+        List of results mapping each cluster to a reference label and a 4x4
+        transformation matrix.
+    """
     model_clouds = {}
     for key, mesh in models.items():
         model_clouds[key] = o3d.geometry.PointCloud(mesh.vertices).voxel_down_sample(0.1)
 
+    ref_heights = []
+    for j,i in  model_clouds.items():
+        points = np.asarray(i.points)
+        height = points[:,1].max()-points[:,1].min()
+        ref_heights.append(height)
+    ref_heights = np.array(ref_heights)
     ref_vols = np.array([i.get_oriented_bounding_box().volume() for j, i in model_clouds.items()])
 
     result = []
     for cluster in clusters:
-        vol = cluster.get_oriented_bounding_box().volume()
+        # vol = cluster.get_oriented_bounding_box().volume()
+        points = np.asarray(cluster.points)
+        height = points[:,1].max()-points[:,1].min()
         matches = []
-        for (key, cl), ref_vol in zip(models.items(), ref_vols):
-            if vol > 0.1*ref_vol and 1.5*ref_vol > vol:
-                matches.append(key)
+        for (key, cl), ref_height, ref_vol in zip(models.items(),
+                                                  ref_heights,
+                                                  ref_vols):
+            if height > 0.6*ref_height and 1.2*ref_height > height:
+                vol = cluster.get_axis_aligned_bounding_box().volume()
+                if vol <1.5*ref_vol:
+                    matches.append(key)
 
         rmse_best = np.inf
         match_best = None

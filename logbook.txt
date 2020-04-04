@@ -254,4 +254,34 @@ Created a set of several related point clouds to try registering with open3d.
 
 8/03/20
     Created self-contained classes for processing the scene and easily accessing
-    models once they have been classified.
+    models once they have been classified. Began looking at how to project the
+    Triangle meshes into a 2D image view to get the view-point of the model and
+    then calculate LOS.
+
+2/04/20
+    Gathered clouds for a new scene layout with all the models separate from the
+    building so that the algorithm can be tested on matching all the models.
+    Have also cut out the table plane of the reference models to reduce the
+    bounding box size.
+
+    Global alignment works just as well, but the constrained y axis rotation
+    icp gives perfect alignment, where the significantly quicker library
+    implementation throws away the initial alignment.
+
+3/04/20
+    Will experiment with using cluster height rather than bounding box volume,
+    as it appears much of the variation and noise in the clustered model is
+    in the x-z plane. If this still doesn't work, a penalisation to any height
+    discrepancy in the icp cost function could be added as this will be better
+    satisfied with closer-height matching models. Using height also has the
+    bonus of sorting wide and thin clusters.
+
+    The results make sure that 3/4 models in the new scene are matched with the
+    incorrect model at least matching with the correct category of model (large
+    or small). Will add in a separate volume check to filter out long thin
+    sections also.
+
+    A lot of the clusters in this new scene are clearly mis-coloured or are
+    artifacts from the table. Will look at how potentially using a colour
+    histogram to help filter noise could be used, since the material files are
+    .png so can also be easily processed for matching.
