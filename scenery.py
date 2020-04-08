@@ -14,9 +14,14 @@ class Scene:
     ----------
     cloud : o3d.geometry.PointCloud
         Point cloud representing the scene.
-    building : bool
+    building : bool (=True)
         True if building is present in the scene. This is used as a size
         reference to more accurately determin scaling.
+    align : bool (=False)
+        If True, the point cloud will be re-aligned to put the building at the
+        centre of the scene, with the table in the x-z plane. If False, this
+        alignment must already have been carried out otherwise the
+        reconstruction will not be correct.
 
     Properties
     ----------
@@ -46,19 +51,20 @@ class Scene:
     buidling_height = 20  # cm
     scale_factor = 93.9919866538415
 
-    def __init__(self, cloud, building=True):
+    def __init__(self, cloud, build=True, align=False):
         # generate labels
         self.labels, norm = corr.segment(cloud)
         self.cloud = cloud
 
         # align building with origin
-        # self.cloud = corr.building_align(cloud, labels, norm)
-        max_vol = 0
+        if align:
+            self.cloud = corr.building_align(cloud, self.labels, norm)
 
         # save building for quick access
         building_label = -1
         self.building = None
-        if building is True:
+        max_vol = 0
+        if build is True:
             for i in range(self.labels.max()):  # note that this will go up to but not include table
                 cluster = np.where(self.labels == i)[0]
                 cluster = self.cloud.select_down_sample(cluster)
@@ -186,6 +192,7 @@ class Model:
     """
     inchtocm = 2.54
     ref_dict = {}
+    ref_clouds = {}
     weapons = {"Missile Pod": 36,
                "Pulse Rifle": 30,
                "Markerlight": 36,
@@ -203,13 +210,15 @@ class Model:
         if Model.ref_dict == {}:
             print("Loading References...")
             Model.ref_dict = utils.open_refs()
+            for key, mesh in Model.ref_dict.items():
+                Model.ref_clouds[key] = mesh.sample_points_poisson_disk(1000)
 
         self.cluster = cluster
         if ref is not None:
             self.ref = ref
             self.R = R
         else:
-            match_best, R = corr.match_model([self.cluster], Model.ref_dict)
+            match_best, R = corr.match_model([self.cluster], Model.ref_clouds)
             self.ref = match_best
             self.R = np.linalg.inv(R)
 

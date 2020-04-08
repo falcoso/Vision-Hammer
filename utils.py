@@ -498,17 +498,10 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.005):
         """Picks correspondance under current transformation."""
         source_c = deepcopy(source)
         source_c.transform(R(theta, trans))
-        source_tree = o3d.geometry.KDTreeFlann(source_c)
-        centroid = source_c.get_center()
-        k, id, _ = source_tree.search_knn_vector_3d(centroid, len(source_c.points))
-
-        dist_order = np.array(id[::-1], dtype=int)
         ids = -np.ones(len(source_c.points), dtype=int)
-        for i in dist_order:
+        for i in range(len(source_c.points)):
             k, id, _ = target_tree.search_knn_vector_3d(source_c.points[i], 1)
-            id = np.asarray(id)
-            ids[i] = id[0]
-
+            ids[i] = np.asarray(id)[0]
         return ids
 
     def get_inliers(theta, trans, source, target, ids):

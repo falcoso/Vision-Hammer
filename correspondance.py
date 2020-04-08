@@ -300,7 +300,7 @@ def orient_refs(pcd):
     return R
 
 
-def segment(pcd):
+def segment(pcd, plane_thresh=0.01):
     """
     Segments a scene of a warhammer board and classified regions of interest.
 
@@ -308,6 +308,9 @@ def segment(pcd):
     ----------
     pcd : open3d.geometry.PointCloud
         Point Cloud to segment
+    plane_thresh : float
+        Maximum distance from the table for a point to be considered a part of
+        the table plane.
 
     Returns
     -------
@@ -318,15 +321,15 @@ def segment(pcd):
     Normal : numpy.array(3)
         3 dimensional unit vector for the normal of the table.
     """
-    plane_thresh = 0.01
-
     # get table plane
-    Normal, plane = pcd.segment_plane(0.005, 20, 100)
+    Normal, plane = pcd.segment_plane(plane_thresh, 20, 100)
     Normal = Normal[:3]/np.linalg.norm(Normal[:3])
 
     # get the distance of the plane so that everything below can be removed
     dist = np.mean(np.asarray(pcd.points)[plane].dot(Normal))
     n_dot = np.asarray(pcd.points).dot(Normal)-dist
+    if Normal[1] < 0:
+        n_dot *= -1
 
     # classify the scene based on the directions
     plane = np.where(np.abs(n_dot) <= plane_thresh)[0]  # table itself
@@ -334,7 +337,9 @@ def segment(pcd):
     outliers = np.where(n_dot < -plane_thresh)[0]       # anything below the table
 
     # cluster all inliers
-    cluster_model = DBSCAN(eps=0.05,
+    height = n_dot[inliers].max()
+    pcd.scale(20/height, center=False)
+    cluster_model = DBSCAN(eps=5,
                            min_samples=50,
                            n_jobs=-1).fit(np.asarray(pcd.points)[inliers])
     cluster_labels = cluster_model.labels_
@@ -498,7 +503,8 @@ def building_align(pcd, labels, norm):
     pcd.transform(R)
     return pcd
 
-def match_model(clusters, models):
+
+def match_model(clusters, model_clouds):
     """
     Finds the best matching models to a set of clusters.
 
@@ -506,7 +512,7 @@ def match_model(clusters, models):
     ----------
     clusters : list(open3d.geometry.PointCloud)
         List of point clouds to which a model is to be matched.
-    models : dict {str: open3d.geometry.PointCloud}
+    model_clouds : dict {str: open3d.geometry.PointCloud}
         Dictionary of reference clouds to which the clusters are to be matched
         to.
 
@@ -516,30 +522,25 @@ def match_model(clusters, models):
         List of results mapping each cluster to a reference label and a 4x4
         transformation matrix.
     """
-    model_clouds = {}
-    for key, mesh in models.items():
-        model_clouds[key] = o3d.geometry.PointCloud(mesh.vertices).voxel_down_sample(0.1)
-
     ref_heights = []
-    for j,i in  model_clouds.items():
+    for j, i in model_clouds.items():
         points = np.asarray(i.points)
-        height = points[:,1].max()-points[:,1].min()
+        height = points[:, 1].max()-points[:, 1].min()
         ref_heights.append(height)
     ref_heights = np.array(ref_heights)
     ref_vols = np.array([i.get_oriented_bounding_box().volume() for j, i in model_clouds.items()])
 
     result = []
     for cluster in clusters:
-        # vol = cluster.get_oriented_bounding_box().volume()
         points = np.asarray(cluster.points)
-        height = points[:,1].max()-points[:,1].min()
+        height = points[:, 1].max()-points[:, 1].min()
         matches = []
-        for (key, cl), ref_height, ref_vol in zip(models.items(),
+        for (key, cl), ref_height, ref_vol in zip(model_clouds.items(),
                                                   ref_heights,
                                                   ref_vols):
             if height > 0.6*ref_height and 1.2*ref_height > height:
                 vol = cluster.get_axis_aligned_bounding_box().volume()
-                if vol <1.5*ref_vol:
+                if vol < 1.5*ref_vol:
                     matches.append(key)
 
         rmse_best = np.inf
@@ -547,7 +548,7 @@ def match_model(clusters, models):
         R_best = np.identity(4)
         for i in matches:
             R, rmse = match_to_model(cluster, model_clouds[i])
-            if rmse < rmse_best:
+            if rmse < rmse_best and rmse < 1:
                 rmse_best = rmse
                 R_best = R
                 match_best = i

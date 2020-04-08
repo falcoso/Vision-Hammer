@@ -285,3 +285,37 @@ Created a set of several related point clouds to try registering with open3d.
     artifacts from the table. Will look at how potentially using a colour
     histogram to help filter noise could be used, since the material files are
     .png so can also be easily processed for matching.
+
+6/04/20
+    Looking at the histograms of the reference files vs the clouds, there is not
+    enough data to accurately match the histograms with one another. It was
+    also noted that the 'table' points in the clusters which were the wrong
+    colour could still feasibly be in a structurally correct location on the
+    model and therefore still useful for matching the models, since colour is
+    not currently used in our constrained algorithm.
+
+    May take new scene but make sure accuracy settings are turned up on the
+    camera vs density - while the final clusters of the smaller models look
+    largely unrecognisable (though still surprisingly match correct) it is
+    possible to see the model structure in the individual scenes that make up
+    the model, such as the protruding gun barrels.
+
+    https://stackoverflow.com/questions/19000096/match-3d-point-cloud-to-cad-model
+
+7/04/20
+    When there is enough information in the sub-scenes for the model to match
+    correctly, the sub-scene orientation is perfect. However there is often
+    not enough points for it to be able to find any match, and none of them
+    correctly identify the commander. It looks like the problem is often the
+    surface just sits in the center of the broadside reference, and because
+    it is the surrounded by points it results in a lower cost.
+
+    Playing around with the effects of point-to-plane instead.
+
+8/04/20
+    Have created some new scene layouts, captured both in the conventional way
+    of using the RealSense and registering them, as well as photogrammetry on
+    the views to validate on more 'accurate' data. Discovered also sampling
+    triangle meshes on a poisson disk - this could be helpful in specifically
+    locating the building in a scene, and may allow for models internall to
+    be taken out.
