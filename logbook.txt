@@ -307,7 +307,7 @@ Created a set of several related point clouds to try registering with open3d.
     correctly, the sub-scene orientation is perfect. However there is often
     not enough points for it to be able to find any match, and none of them
     correctly identify the commander. It looks like the problem is often the
-    surface just sits in the center of the broadside reference, and because
+    surface just sits in the centre of the broadside reference, and because
     it is the surrounded by points it results in a lower cost.
 
     Playing around with the effects of point-to-plane instead.
@@ -316,6 +316,6 @@ Created a set of several related point clouds to try registering with open3d.
     Have created some new scene layouts, captured both in the conventional way
     of using the RealSense and registering them, as well as photogrammetry on
     the views to validate on more 'accurate' data. Discovered also sampling
-    triangle meshes on a poisson disk - this could be helpful in specifically
-    locating the building in a scene, and may allow for models internall to
+    triangle meshes on a Poisson disk - this could be helpful in specifically
+    locating the building in a scene, and may allow for models internally to
     be taken out.

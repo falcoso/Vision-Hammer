@@ -248,5 +248,5 @@ class Model:
             points = np.asarray(geom.points)
 
         points = points[np.where(points[:, 1] > 1)[0]]
-        points = np.delete(points, 1, axis=1)
+        points = points[:, ::2]
         return points

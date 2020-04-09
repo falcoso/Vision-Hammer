@@ -472,7 +472,7 @@ def building_align(pcd, labels, norm):
     # fit building corners
     # Project points onto x-z plane
     points = np.asarray(building.points)
-    points = np.delete(points, 1, axis=1)
+    points = points[:, ::2]
     points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
     hull = sp.spatial.ConvexHull(points[:, :2])
     hull_pts = points[hull.vertices]

@@ -494,9 +494,10 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.01):
 
     def get_inliers(xs, ts):
         """Filters points more than 2*mad from the median."""
-        residuals = np.abs(np.linalg.norm(xs-ts, axis=1))
-        mads = stats.median_absolute_deviation(residuals)
-        inliers = np.where(np.abs(residuals-np.median(residuals)) < 2*mads)[0]
+        residuals = np.linalg.norm(xs-ts, axis=1)
+        i_residuals = np.argsort(residuals)
+        inliers = i_residuals[:int(0.8*len(residuals))]
+        inliers = np.sort(inliers)
         return inliers
 
     R_old = np.array([[np.cos(theta),  0, np.sin(theta), 0],
