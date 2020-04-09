@@ -64,10 +64,10 @@ def hist_normals(normals, bin_size=0.95):
     while len(normals) > 0:
         # select first normal and get dot product with all other normals
         normal = unit_norms[0]
-        dot_prod = unit_norms.dot(normal)
+        dot_prod = unit_norms @ normal
         ind = np.where(np.abs(dot_prod) > bin_size)[0]
         # dot with sign incase vectors are aligned but in opposite directions
-        vec = np.sign(dot_prod[ind]).dot(normals[ind])
+        vec = np.sign(dot_prod[ind]) @ normals[ind]
         vec_list.append(vec)
         # delete all normals that have been matched
         normals = np.delete(normals, ind, axis=0)
@@ -213,7 +213,7 @@ def align_vectors(origin, target):
     """
 
     cross = -np.cross(target, origin)
-    cos_ang = target.dot(origin)
+    cos_ang = target @ origin
 
     cross_skew = np.array([[0,         -cross[2],  cross[1]],
                            [cross[2],  0,         -cross[0]],
@@ -298,18 +298,18 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         top = True
         n = np.random.rand(2)  # arbitrary starting vector
         n /= np.linalg.norm(n)
-        dist = n.dot(mean_pts)  # scale to pass through points
+        dist = n @ mean_pts  # scale to pass through points
         n /= dist
-        alpha = R.dot(n).dot(mean_pts)  # alpha scales second line
+        alpha = R @ n @ mean_pts  # alpha scales second line
     else:
         top = False
 
     n1 = n
-    n2 = R.dot(n)/alpha
+    n2 = (R @ n)/alpha
     for i in range(max_iter):
         # calculate distance to lines
-        l1 = np.abs(pts.dot(n1)-1)/np.linalg.norm(n1)
-        l2 = np.abs(pts.dot(n2)-1)/np.linalg.norm(n2)
+        l1 = np.abs(pts @ n1 - 1)/np.linalg.norm(n1)
+        l2 = np.abs(pts @ n2 - 1)/np.linalg.norm(n2)
 
         # get indexes closest to each line
         ind1 = np.where(l1 < l2)[0]
@@ -329,7 +329,7 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
 
         alpha_old = alpha
         n1 = n
-        alpha, inliers2in = ransac1d(x2s.dot(R.dot(n)), 3, 50)
+        alpha, inliers2in = ransac1d(x2s @ R @ n, 3, 50)
         inliers2 = x2s[inliers2in]
         # error would have been raised above if this is true so new n has not
         # been calculated
@@ -341,16 +341,16 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         if abs(alpha_old-alpha)/alpha_old < tol and  \
                 abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
             break
-        n2 = R.dot(n)/alpha
+        n2 = (R @ n)/alpha
 
-    c1 = inliers1.dot(n) - 1
-    c2 = inliers2.dot(R.dot(n))/alpha - 1
-    cost = c1.T.dot(c1) + c2.T.dot(c2)
+    c1 = inliers1 @ n - 1
+    c2 = (inliers2 @ R @ n)/alpha - 1
+    cost = c1.T @ c1 + c2.T @ c2
 
     # since solution is not symmetric, repeat with optimal n rotated and pick
     # best fit
     if top:
-        n_new, alpha_new, i, j, cost2 = fit_corner(pts, n=R.dot(n)/alpha,
+        n_new, alpha_new, i, j, cost2 = fit_corner(pts, n=(R @ n)/alpha,
                                                    alpha=np.linalg.norm(n)/alpha)
         if cost2 < cost:
             n = n_new
@@ -361,10 +361,10 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
 
         # set up return convention
         return_set = [(n, alpha, ind1, ind2, cost),
-                      (R.dot(n)/alpha, -1/alpha, ind2, ind1, cost)]
+                      ((R @ n)/alpha, -1/alpha, ind2, ind1, cost)]
 
-        n2 = R.dot(n)/alpha
-        intersection = np.linalg.inv(np.array([n, n2])).dot(np.ones(2))
+        n2 = (R @ n)/alpha
+        intersection = np.linalg.inv(np.array([n, n2])) @ np.ones(2)
         pts_copy = deepcopy(pts)
         pts_copy -= intersection
         ang = np.zeros(2)
@@ -541,7 +541,7 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
         source_c.transform(R0)
         R_old = R0 @ R_old
 
-        if abs(R0[0,1]) < np.pi*tol:
+        if abs(R0[0, 1]) < np.pi*tol:
             break
 
     # get final cost
@@ -559,6 +559,7 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
 
     final_cost = np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
     return R_old, final_cost
+
 
 def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
     """
@@ -633,19 +634,19 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
         ns = ns[inliers]
 
         # construct a matrix for least squares
-        xs_r = xs[:, ::2] #takes just x and z values and swaps them
+        xs_r = xs[:, ::2]  # takes just x and z values and swaps them
         ns_r = ns[:, ::2]
-        ns_r[:,-1] *=-1
+        ns_r[:, -1] *= -1
 
         A = np.zeros((len(xs_r), 4))
-        A[:,0] = xs[:,-1]*ns[:,0] - xs[:,0]*ns[:,-1]
-        A[:,1:] = ns
+        A[:, 0] = xs[:, -1]*ns[:, 0] - xs[:, 0]*ns[:, -1]
+        A[:, 1:] = ns
         b = np.einsum('ij,ij->i', ts-xs, ns)
         lam, res, rank, s = np.linalg.lstsq(A, b, rcond=None)
         R0 = np.identity(4)
-        R0[0,2] = lam[0]
-        R0[2,0] = -lam[0]
-        R0[:3,-1] = lam[1:]
+        R0[0, 2] = lam[0]
+        R0[2, 0] = -lam[0]
+        R0[:3, -1] = lam[1:]
 
         source_c.transform(R0)
         R_old = R0 @ R_old

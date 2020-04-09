@@ -142,7 +142,7 @@ def region_grow(pcd, tol=0.95, find_planes=False):
                 # filter any points already classified
                 idx = list((set(idx)-plane).intersection(ind))
                 kn_normals = normals[idx]
-                match = np.abs(kn_normals.dot(match_normal))
+                match = np.abs(kn_normals @ match_normal)
                 plane_addition = {i for i, j in zip(idx, match) if j > tol}
 
                 # all elements in plane_addition not already in the plane
@@ -155,7 +155,7 @@ def region_grow(pcd, tol=0.95, find_planes=False):
                 if counter == 0 and find_planes:
                     plane_points = np.asarray(pcd.select_down_sample(list(plane)).points)
                     pseudoinverse = np.linalg.pinv(plane_points.T)
-                    match_normal = pseudoinverse.T.dot(np.ones(plane_points.shape[0]))
+                    match_normal = pseudoinverse.T @ np.ones(plane_points.shape[0])
                     match_normal /= np.linalg.norm(match_normal)
 
             # remove all processed points
@@ -205,19 +205,19 @@ def isolate_model(pcd):
 
     # TODO: This should be less than, which is why below the y-axis has to be
     # inverted for correct alignment
-    if norm.dot([0, 1, 0]) > 0:
+    if norm[1] > 0:
         norm = -norm
-    dist = np.mean(plane_points.dot(norm))
+    dist = np.mean(plane_points @ norm)
 
     # remove anything below the table
-    dot_match = np.abs(np.asarray(cl.points).dot(norm))
+    dot_match = np.abs(np.asarray(cl.points) @ norm)
     del_ind = np.where(dot_match < 0.97*dist)[0]
     # del_ind [i for i in range(len(dot_match)) if dot_match[i] < 0.97*dist]
     cl = cl.select_down_sample(del_ind)
 
     # get colours of the table and remove similar colours
     table_colour = np.average(np.asarray(plane.colors), axis=0)
-    dot_match = np.abs(np.asarray(cl.colors).dot(table_colour))
+    dot_match = np.abs(np.asarray(cl.colors) @ table_colour)
     del_ind = [i for i in range(len(dot_match)) if dot_match[i] < 0.7]
     cl = cl.select_down_sample(del_ind)
 
@@ -228,14 +228,14 @@ def isolate_model(pcd):
     cl.translate(-centre)
 
     # move plane equation - by subtracting plane distance
-    dist -= norm.dot(centre)
+    dist -= norm @ centre
 
     # remove final straggles away from centre
     ind = utils.crop_distance(cl, 0.1)
     cl = cl.select_down_sample(ind, invert=True)
     centre = cl.get_center()
     cl.translate(-centre)
-    dist = dist - norm.dot(centre)
+    dist = dist - norm @ centre
 
     # align plane with axis orientation
     axis = np.array([0, -1, 0])  # principle axis of alignment
@@ -277,8 +277,8 @@ def orient_refs(pcd):
     # Normal = Normal[:3]/np.linalg.norm(Normal[:3])
 
     # get the distance of the plane so that everything below can be removed
-    dist = np.mean(np.asarray(pcd.points)[plane].dot(Normal))
-    n_dot = np.asarray(pcd.points).dot(Normal)-dist
+    dist = np.mean(np.asarray(pcd.points)[plane] @ Normal)
+    n_dot = np.asarray(pcd.points) @ Normal-dist
 
     # classify the scene based on the directions
     plane = np.where(np.abs(n_dot) <= 0.01)[0]  # table itself
@@ -288,7 +288,7 @@ def orient_refs(pcd):
     pcd.transform(R)
     R2 = np.identity(4)
     R2[:3, -1] = -pcd.get_center()
-    R = R2.dot(R)
+    R = R2 @ R
     pcd.translate(-pcd.get_center())
     table = plane
     points = np.asarray(pcd.points)
@@ -296,7 +296,7 @@ def orient_refs(pcd):
     R2 = np.identity(4)
     R2[1, -1] = -np.mean(table_pts, axis=0)[1]
     pcd.translate(np.array([0, -np.mean(table_pts, axis=0)[1], 0]))
-    R = R2.dot(R)
+    R = R2 @ R
     return R
 
 
@@ -326,8 +326,8 @@ def segment(pcd, plane_thresh=0.01):
     Normal = Normal[:3]/np.linalg.norm(Normal[:3])
 
     # get the distance of the plane so that everything below can be removed
-    dist = np.mean(np.asarray(pcd.points)[plane].dot(Normal))
-    n_dot = np.asarray(pcd.points).dot(Normal)-dist
+    dist = np.mean(np.asarray(pcd.points)[plane] @ Normal)
+    n_dot = np.asarray(pcd.points) @ Normal - dist
     if Normal[1] < 0:
         n_dot *= -1
 
@@ -403,14 +403,12 @@ def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
     floor_vec /= np.linalg.norm(floor_vec)
 
     # iterate through the normals and find the plane closest to the normal
-    max_size = np.max([len(i) for i in filtered_planes])  # size of largest plane
     dist = np.inf
     for plane, normal in zip(filtered_planes, filtered_norms):
         points = np.asarray(cl.points)[plane]
-        if floor_vec.dot(normal) > 0.80:
-            new_dist = np.mean(points.dot(normal))
+        if floor_vec @ normal > 0.80:
+            new_dist = np.mean(points @ normal)
             if abs(new_dist) < dist:
-                table = plane
                 table_norm = normal
                 dist = new_dist
 
@@ -420,7 +418,7 @@ def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
             cl.colors[point] = colour
 
     # remove any other points in line with plane
-    n_dot = np.asarray(pcd.points).dot(table_norm)-dist
+    n_dot = np.asarray(pcd.points) @ table_norm - dist
     to_remove = list(np.where((n_dot > 0.01) | (np.abs(n_dot) < 0.01))[0])
     cl = pcd.select_down_sample(to_remove, invert=True)
 
@@ -489,12 +487,12 @@ def building_align(pcd, labels, norm):
     R = np.array([[0, -1],
                   [1, 0]])
     n, alpha, ind1, ind2, cost = utils.fit_corner(hull_pts)
-    n2 = R.dot(n)/alpha
+    n2 = (R @ n)/alpha
     corner = np.sum(np.linalg.inv(np.array([n, n2])), axis=1)
     corner = np.array([corner[0], 0, corner[1]])
 
     # ensures vectors point out from centroid of corner
-    if np.mean(hull_pts[ind1].dot(n)) < np.mean(hull_pts.dot(n)):
+    if np.mean(hull_pts[ind1] @ n) < np.mean(hull_pts @ n):
         n *= -1
     n = np.array([n[0], 0, n[1]])
     n /= np.linalg.norm(n)
@@ -600,6 +598,6 @@ def match_to_model(cluster, target):
             rmse = cost
             R_best = R1
 
-    R = R_best.dot(R)
+    R = R_best @ R
     cluster2 = deepcopy(cluster)
     return R, rmse
