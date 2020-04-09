@@ -339,7 +339,7 @@ def segment(pcd, plane_thresh=0.01):
     # cluster all inliers
     height = n_dot[inliers].max()
     pcd.scale(20/height, center=False)
-    cluster_model = DBSCAN(eps=5,
+    cluster_model = DBSCAN(eps=3,
                            min_samples=50,
                            n_jobs=-1).fit(np.asarray(pcd.points)[inliers])
     cluster_labels = cluster_model.labels_
@@ -539,9 +539,9 @@ def match_model(clusters, model_clouds):
                                                   ref_heights,
                                                   ref_vols):
             if height > 0.6*ref_height and 1.2*ref_height > height:
-                vol = cluster.get_axis_aligned_bounding_box().volume()
-                if vol < 1.5*ref_vol:
-                    matches.append(key)
+                vol = cluster.get_oriented_bounding_box().volume()
+                # if vol < 2*ref_vol and vol > 0.3*ref_vol:
+                matches.append(key)
 
         rmse_best = np.inf
         match_best = None
@@ -602,4 +602,6 @@ def match_to_model(cluster, target):
 
     R = R_best.dot(R)
     cluster2 = deepcopy(cluster)
+    o3d.visualization.draw_geometries([cluster2.transform(R), target])
+    print(rmse)
     return R, rmse

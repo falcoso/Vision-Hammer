@@ -80,13 +80,8 @@ class Scene:
             Scene.scale_factor = Scene.buidling_height/height  # height of building
             building.scale(Scene.scale_factor, center=False)
 
-            R = np.array([[0, 0, -1, 0],
-                          [0, 1, 0, 0],
-                          [1, 0, 0, 0],
-                          [0, 0, 0, 1]])
-
             print("Generating Building...")
-            self.building = Model(building, "Building", R=R)
+            self.building = Model(building, "Building", R=np.identity(4))
 
         else:
             R = utils.align_vectors(norm, np.array([0, 1, 0]))
@@ -206,18 +201,26 @@ class Model:
                 "Broadside": 6,
                 "Fire Warrior": 7}
 
-    def __init__(self, cluster, ref=None, R=np.identity(4)):
+    def __init__(self, cluster, ref=None, R=None):
         if Model.ref_dict == {}:
             print("Loading References...")
             Model.ref_dict = utils.open_refs()
             for key, mesh in Model.ref_dict.items():
-                Model.ref_clouds[key] = mesh.sample_points_poisson_disk(1000)
+                if key != "Building":
+                    Model.ref_clouds[key] = mesh.sample_points_poisson_disk(1000)
+                else:
+                    Model.ref_clouds[key] = mesh.sample_points_poisson_disk(10000)
 
         self.cluster = cluster
         if ref is not None:
             self.ref = ref
+            if R is None:
+                print("Going in to cluster building")
+                R, rmse = corr.match_to_model(self.cluster, Model.ref_clouds[ref])
             self.R = R
         else:
+            if R is None:
+                R = np.identity(4)
             match_best, R = corr.match_model([self.cluster], Model.ref_clouds)
             self.ref = match_best
             self.R = np.linalg.inv(R)

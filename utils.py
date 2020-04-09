@@ -247,7 +247,7 @@ def colour_labels(pcd, labels):
     """
 
     colours = np.random.rand(labels.max()+1-labels.min(), 3)
-    colours[-1] = np.array([0,0,0])
+    colours[-1] = np.array([0, 0, 0])
     for i in range(len(labels)):
         pcd.colors[i] = colours[labels[i]]
 
@@ -446,11 +446,16 @@ def open_refs():
     build_ref.scale(scale_factor, center=False)
     build_ref.compute_triangle_normals()
     build_ref.compute_vertex_normals()
+    R = np.array([[0, 0, -1, 0],
+                  [0, 1, 0, 0],
+                  [1, 0, 0, 0],
+                  [0, 0, 0, 1]])
+    build_ref.transform(R)
     models["Building"] = build_ref
     return models
 
 
-def icp_constrained(source, target, theta=0, iter=30, tol=0.005):
+def icp_constrained(source, target, theta=0, iter=30, tol=0.01):
     """
     Point to point iterative closest point, constrained to rotate about the
     y-axis.
@@ -479,84 +484,75 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.005):
     target_tree = o3d.geometry.KDTreeFlann(target)
     trans = np.zeros(3)
 
-    def cost(theta, trans, xs, ts):
-        """Calculates cost function of given correspondance."""
-        xs = R(theta, trans)[:3, :3].dot(xs.T).T
-        return np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
-
-    def R(theta, trans):
-        """Generates rotation matrix of angle theta, translating trans."""
-        R0 = np.array([[np.cos(theta),  0, np.sin(theta), 0],
-                       [0,              1,             0, 0],
-                       [-np.sin(theta), 0, np.cos(theta), 0],
-                       [0,              0,             0, 1]])
-
-        R0[:3, -1] = trans
-        return R0
-
-    def correspondance(theta, trans, source, target):
+    def correspondance(source, target):
         """Picks correspondance under current transformation."""
-        source_c = deepcopy(source)
-        source_c.transform(R(theta, trans))
-        ids = -np.ones(len(source_c.points), dtype=int)
-        for i in range(len(source_c.points)):
-            k, id, _ = target_tree.search_knn_vector_3d(source_c.points[i], 1)
+        ids = -np.ones(len(source.points), dtype=int)
+        for i in range(len(source.points)):
+            k, id, _ = target_tree.search_knn_vector_3d(source.points[i], 1)
             ids[i] = np.asarray(id)[0]
         return ids
 
-    def get_inliers(theta, trans, source, target, ids):
+    def get_inliers(xs, ts):
         """Filters points more than 2*mad from the median."""
-        source_c = deepcopy(source)
-        source_c.transform(R(theta, trans))
-        xs = np.asarray(source_c.points)
-        ts = np.asarray(target.points)[ids]
         residuals = np.abs(np.linalg.norm(xs-ts, axis=1))
         mads = stats.median_absolute_deviation(residuals)
         inliers = np.where(np.abs(residuals-np.median(residuals)) < 2*mads)[0]
         return inliers
 
+    R_old = np.array([[np.cos(theta),  0, np.sin(theta), 0],
+                      [0,              1,             0, 0],
+                      [-np.sin(theta), 0, np.cos(theta), 0],
+                      [0,              0,             0, 1]])
+    source_c = deepcopy(source)
+    source_c.transform(R_old)
+    target_points = np.asarray(target.points)
+
     for i in range(iter):
         # get correspondance
-        ids = correspondance(theta, trans, source, target)
+        ids = correspondance(source_c, target_tree)
 
         # filter outliers
-        inliers = get_inliers(theta, trans, source, target, ids)
-        xs = np.asarray(source.points)[inliers]
-        ts = np.asarray(target.points)[ids][inliers]
-        trans = np.mean(xs-ts, axis=0)
+        xs = np.asarray(source_c.points)
+        ts = target_points[ids]
+
+        inliers = get_inliers(xs, ts)
+        xs = xs[inliers]
+        ts = ts[inliers]
+        # trans = np.mean(xs-ts, axis=0)
 
         # remove y axis to constrain transformation about that axis
-        xs = np.delete(xs, 1, axis=1)
-        ts = np.delete(ts, 1, axis=1)
+        mu_x = np.mean(xs, axis=0)
+        mu_t = np.mean(ts, axis=0)
 
-        R0 = (xs-np.mean(xs, axis=0)).T.dot(ts-np.mean(ts, axis=0))
+        xs_r = xs[:, ::2]  # removes y axis element
+        ts_r = ts[:, ::2]
+
+        R0 = (xs_r-mu_x[::2]).T.dot(ts_r-mu_t[::2])
         u, s, v = np.linalg.svd(R0)
         R0 = u.dot(v.T)
 
-        # catch numerical errors
-        r00 = R0[0, 0]
-        if r00 > 1:
-            if r00 < 1 + 1E-10:
-                theta_new = 0
-            else:
-                raise RuntimeError("invalid value of cos(theta) calculated in SVD: {}".format(r00))
-        else:
-            theta_new = np.arccos(R0[0, 0])
+        R0 = np.array([[R0[0, 0], 0, R0[0, 1], 0],
+                       [0,        1, 0,       0],
+                       [R0[1, 0], 0, R0[1, 1], 0],
+                       [0,        0, 0,       1]])
 
-        if abs(theta_new-theta) < abs(theta)*tol:
-            break
-
-        theta = theta_new
-        xs = np.asarray(source.points)[inliers]
-        ts = np.asarray(target.points)[ids][inliers]
+        trans = mu_t - mu_x.dot(R0[:3, :3].T)
+        R0[:3, -1] = trans
+        source_c.transform(R0)
+        R_old = R0.dot(R_old)
 
     # get final cost
-    ids = correspondance(theta, trans, source, target)
+    source_c = deepcopy(source)
+    source_c.transform(R_old)
+    ids = correspondance(source_c, target_tree)
 
     # filter outliers
-    inliers = get_inliers(theta, trans, source, target, ids)
-    xs = np.asarray(source.points)[inliers]
-    ts = np.asarray(target.points)[ids][inliers]
+    xs = np.asarray(source_c.points)
+    ts = target_points[ids]
 
-    final_cost = cost(theta, trans, xs, ts)
-    return R(theta, trans), final_cost
+    inliers = get_inliers(xs, ts)
+    xs = xs[inliers]
+    ts = ts[inliers]
+
+    final_cost = np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
+    return R_old, final_cost
