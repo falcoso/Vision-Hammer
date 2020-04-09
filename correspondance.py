@@ -595,13 +595,11 @@ def match_to_model(cluster, target):
     thetas = np.linspace(0, 2*np.pi, 10)
     rmse = np.inf
     for theta in tqdm(thetas):
-        R1, cost = utils.icp_constrained(cluster2, target, theta=theta)
+        R1, cost = utils.icp_constrained_plane(cluster2, target, theta=theta)
         if cost < rmse:
             rmse = cost
             R_best = R1
 
     R = R_best.dot(R)
     cluster2 = deepcopy(cluster)
-    o3d.visualization.draw_geometries([cluster2.transform(R), target])
-    print(rmse)
     return R, rmse

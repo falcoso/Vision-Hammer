@@ -319,3 +319,9 @@ Created a set of several related point clouds to try registering with open3d.
     triangle meshes on a Poisson disk - this could be helpful in specifically
     locating the building in a scene, and may allow for models internally to
     be taken out.
+
+9/04/20
+    Point to plan implemented. It runs at least 5x faster than point to point
+    which may be down to the numpy least squares solver being more efficient
+    than the svd. It is also much more consistent in its results, providing
+    much tighter alignments which classify correctly!

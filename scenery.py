@@ -81,7 +81,7 @@ class Scene:
             building.scale(Scene.scale_factor, center=False)
 
             print("Generating Building...")
-            self.building = Model(building, "Building", R=np.identity(4))
+            self.building = Model(building, "Building")
 
         else:
             R = utils.align_vectors(norm, np.array([0, 1, 0]))
@@ -209,7 +209,7 @@ class Model:
                 if key != "Building":
                     Model.ref_clouds[key] = mesh.sample_points_poisson_disk(1000)
                 else:
-                    Model.ref_clouds[key] = mesh.sample_points_poisson_disk(10000)
+                    Model.ref_clouds[key] = mesh.sample_points_poisson_disk(1000)
 
         self.cluster = cluster
         if ref is not None:

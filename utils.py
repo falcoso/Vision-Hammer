@@ -455,7 +455,7 @@ def open_refs():
     return models
 
 
-def icp_constrained(source, target, theta=0, iter=30, tol=0.01):
+def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
     """
     Point to point iterative closest point, constrained to rotate about the
     y-axis.
@@ -482,7 +482,6 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.01):
         Cost per point of the given transformation.
     """
     target_tree = o3d.geometry.KDTreeFlann(target)
-    trans = np.zeros(3)
 
     def correspondance(source, target):
         """Picks correspondance under current transformation."""
@@ -528,19 +527,22 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.01):
         xs_r = xs[:, ::2]  # removes y axis element
         ts_r = ts[:, ::2]
 
-        R0 = (xs_r-mu_x[::2]).T.dot(ts_r-mu_t[::2])
+        R0 = (xs_r-mu_x[::2]).T @ (ts_r-mu_t[::2])
         u, s, v = np.linalg.svd(R0)
-        R0 = u.dot(v.T)
+        R0 = u @ v.T
 
         R0 = np.array([[R0[0, 0], 0, R0[0, 1], 0],
                        [0,        1, 0,       0],
                        [R0[1, 0], 0, R0[1, 1], 0],
                        [0,        0, 0,       1]])
 
-        trans = mu_t - mu_x.dot(R0[:3, :3].T)
+        trans = mu_t - mu_x @ R0[:3, :3].T
         R0[:3, -1] = trans
         source_c.transform(R0)
-        R_old = R0.dot(R_old)
+        R_old = R0 @ R_old
+
+        if abs(R0[0,1]) < np.pi*tol:
+            break
 
     # get final cost
     source_c = deepcopy(source)
@@ -556,4 +558,115 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.01):
     ts = ts[inliers]
 
     final_cost = np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
+    return R_old, final_cost
+
+def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
+    """
+    Point to plane iterative closest point, constrained to rotate about the
+    y-axis.
+
+    Parameters
+    ----------
+    source : o3d.geometry.PointCloud
+        Point cloud that will be rotated to best fit.
+    target : o3d.geometry.PointCloud
+        Point cloud to which source will be matched
+    theta : float
+        Initial rotation about y-axis to start fitting in radians.
+    iter : int
+        Maximum number of iterations.
+    tol : float
+        Percentage change in theta between iterations below which iteration
+        stops.
+
+    Returns
+    -------
+    R : np.array(4x4)
+        4x4 transformation matrix.
+    final_cost : float
+        Cost per point of the given transformation.
+    """
+    target_tree = o3d.geometry.KDTreeFlann(target)
+
+    if not source.has_normals():
+        source.estimate_normals()
+    if not target.has_normals():
+        target.estimate_normals()
+
+    def correspondance(source, target):
+        """Picks correspondance under current transformation."""
+        ids = -np.ones(len(source.points), dtype=int)
+        for i in range(len(source.points)):
+            k, id, _ = target_tree.search_knn_vector_3d(source.points[i], 1)
+            ids[i] = np.asarray(id)[0]
+        return ids
+
+    def get_inliers(xs, ts):
+        """Filters points more than 2*mad from the median."""
+        residuals = np.linalg.norm(xs-ts, axis=1)
+        i_residuals = np.argsort(residuals)
+        inliers = i_residuals[:int(0.8*len(residuals))]
+        inliers = np.sort(inliers)
+        return inliers
+
+    R_old = np.array([[np.cos(theta),  0, np.sin(theta), 0],
+                      [0,              1,             0, 0],
+                      [-np.sin(theta), 0, np.cos(theta), 0],
+                      [0,              0,             0, 1]])
+    source_c = deepcopy(source)
+    source_c.transform(R_old)
+    target_points = np.asarray(target.points)
+    target_norms = np.asarray(target.normals)
+
+    for i in range(iter):
+        # get correspondance
+        ids = correspondance(source_c, target_tree)
+
+        # filter outliers
+        xs = np.asarray(source_c.points)
+        ts = target_points[ids]
+        ns = target_norms[ids]
+
+        inliers = get_inliers(xs, ts)
+        xs = xs[inliers]
+        ts = ts[inliers]
+        ns = ns[inliers]
+
+        # construct a matrix for least squares
+        xs_r = xs[:, ::2] #takes just x and z values and swaps them
+        ns_r = ns[:, ::2]
+        ns_r[:,-1] *=-1
+
+        A = np.zeros((len(xs_r), 4))
+        A[:,0] = xs[:,-1]*ns[:,0] - xs[:,0]*ns[:,-1]
+        A[:,1:] = ns
+        b = np.einsum('ij,ij->i', ts-xs, ns)
+        lam, res, rank, s = np.linalg.lstsq(A, b, rcond=None)
+        R0 = np.identity(4)
+        R0[0,2] = lam[0]
+        R0[2,0] = -lam[0]
+        R0[:3,-1] = lam[1:]
+
+        source_c.transform(R0)
+        R_old = R0 @ R_old
+
+        if abs(lam[0]) < np.pi*tol:
+            break
+
+    # get final cost
+    source_c = deepcopy(source)
+    source_c.transform(R_old)
+    ids = correspondance(source_c, target_tree)
+
+    # filter outliers
+    xs = np.asarray(source_c.points)
+    ts = target_points[ids]
+    ns = target_norms[ids]
+
+    inliers = get_inliers(xs, ts)
+    xs = xs[inliers]
+    ts = ts[inliers]
+    ns = ns[inliers]
+
+    final_cost = np.sum(np.abs(np.einsum('ij,ij->i', (xs-ts), ns)))/len(xs)
     return R_old, final_cost
