@@ -435,22 +435,9 @@ def open_refs():
     for model in model_titles:
         tms = o3d.io.read_triangle_mesh(
             "./Point Clouds/Ref - Photogrammetry/{}/texturedMesh.obj".format(model))
-        R = np.load("./Point Clouds/Ref - Photogrammetry/{}/R_scaling.npy".format(model))
-        tms.transform(R)
         models[model] = tms
 
     build_ref = o3d.io.read_triangle_mesh("./Point Clouds/Building Ref.ply")
-    points = np.asarray(build_ref.vertices)
-    height = points[:, 1].max()-points[:, 1].min()
-    scale_factor = 20/height  # height of building
-    build_ref.scale(scale_factor, center=False)
-    build_ref.compute_triangle_normals()
-    build_ref.compute_vertex_normals()
-    R = np.array([[0, 0, -1, 0],
-                  [0, 1, 0, 0],
-                  [1, 0, 0, 0],
-                  [0, 0, 0, 1]])
-    build_ref.transform(R)
     models["Building"] = build_ref
     return models
 
@@ -671,3 +658,14 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
 
     final_cost = np.sum(np.abs(np.einsum('ij,ij->i', (xs-ts), ns)))/len(xs)
     return R_old, final_cost
+
+def fit_circle(pts):
+    # add column of ones
+    A = np.concatenate((pts, np.ones((pts.shape[0], 1))), 1)
+    b = -np.einsum('ij,ij->i', pts, pts)
+    lam, res, rank, s = np.linalg.lstsq(A, b, rcond=None)
+    a = -lam[0]/2
+    b = -lam[1]/2
+    r = (lam[0]**2 + lam[1]**2 -4*lam[2])/4
+    r = np.sqrt(r)
+    return np.array([b,a]), r

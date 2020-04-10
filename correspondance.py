@@ -262,19 +262,19 @@ def isolate_model(pcd):
 
 def orient_refs(pcd):
     # get table plane
-    planes_list, plane_normals = region_grow(pcd, find_planes=True)
-    labels = np.zeros(len(np.asarray(pcd.points)), dtype=int)
-    lab = 0
-    for i in planes_list:
-        labels[i] = lab
-        lab += 1
-
-    sizes = np.array([len(i) for i in planes_list])
-    Normal = -plane_normals[np.argmax(sizes)]
-    plane = planes_list[np.argmax(sizes)]
-    # Normal, plane = pcd.segment_plane(0.01, 20, 100)
-    # Normal *= -1
-    # Normal = Normal[:3]/np.linalg.norm(Normal[:3])
+    # planes_list, plane_normals = region_grow(pcd, find_planes=True)
+    # labels = np.zeros(len(np.asarray(pcd.points)), dtype=int)
+    # lab = 0
+    # for i in planes_list:
+    #     labels[i] = lab
+    #     lab += 1
+    #
+    # sizes = np.array([len(i) for i in planes_list])
+    # Normal = -plane_normals[np.argmax(sizes)]
+    # plane = planes_list[np.argmax(sizes)]
+    Normal, plane = pcd.segment_plane(0.01, 20, 100)
+    Normal *= -1
+    Normal = Normal[:3]/np.linalg.norm(Normal[:3])
 
     # get the distance of the plane so that everything below can be removed
     dist = np.mean(np.asarray(pcd.points)[plane] @ Normal)

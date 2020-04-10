@@ -2,16 +2,14 @@ __pycache__
 Reading/*
 registration.py
 Building model/*
-*.npy
+Colours Data/*
 .ipynb_checkpoints
 *.jpg
 *.JPG
 Reference Images/*
 Milestones/*
-Point Clouds/*
+Point Clouds/Layout*
+*Test*
+Point Clouds/Ref - RealSense
 Layout Pictures/*
-
-*.obj
-*.mtl
-*.png
-*.ply
+*.SLDPRT
