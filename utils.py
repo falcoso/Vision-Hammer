@@ -434,8 +434,8 @@ def open_refs():
     models = {}
     for model in model_titles:
         tms = o3d.io.read_triangle_mesh(
-            "./Point Clouds/Photogram Refs/{}/texturedMesh.obj".format(model))
-        R = np.load("./Point Clouds/Photogram Refs/{}/R_scaling.npy".format(model))
+            "./Point Clouds/Ref - Photogrammetry/{}/texturedMesh.obj".format(model))
+        R = np.load("./Point Clouds/Ref - Photogrammetry/{}/R_scaling.npy".format(model))
         tms.transform(R)
         models[model] = tms
 

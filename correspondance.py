@@ -300,7 +300,7 @@ def orient_refs(pcd):
     return R
 
 
-def segment(pcd, plane_thresh=0.01):
+def segment(pcd, plane_thresh=0.01, eps=3, scale=True):
     """
     Segments a scene of a warhammer board and classified regions of interest.
 
@@ -308,9 +308,14 @@ def segment(pcd, plane_thresh=0.01):
     ----------
     pcd : open3d.geometry.PointCloud
         Point Cloud to segment
-    plane_thresh : float
+    plane_thresh : float (=0.01)
         Maximum distance from the table for a point to be considered a part of
         the table plane.
+    eps : float (=3)
+        eps parameter for DBSCAN clustering.
+    scale : bool (=True)
+        If true the scene is scaled such that the largest item has a height of
+        20. This should be the building that is in the scene.
 
     Returns
     -------
@@ -336,10 +341,13 @@ def segment(pcd, plane_thresh=0.01):
     inliers = np.where(n_dot > plane_thresh)[0]         # everything above the table
     outliers = np.where(n_dot < -plane_thresh)[0]       # anything below the table
 
+    # scale scene to make eps parameter more robust
+    if scale:
+        height = n_dot[inliers].max()
+        pcd.scale(20/height, center=False)
+
     # cluster all inliers
-    height = n_dot[inliers].max()
-    pcd.scale(20/height, center=False)
-    cluster_model = DBSCAN(eps=3,
+    cluster_model = DBSCAN(eps=eps,
                            min_samples=50,
                            n_jobs=-1).fit(np.asarray(pcd.points)[inliers])
     cluster_labels = cluster_model.labels_
@@ -396,7 +404,8 @@ def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
 
     # get largest plane
     filtered_norms = np.array(filtered_norms)
-    vec_list = utils.hist_plane_norms(filtered_planes, filtered_norms)
+    sizes = np.array([len(i) for i in filtered_planes])
+    vec_list = utils.hist_normals(np.einsum('i,ij->ij', sizes,filtered_norms))
 
     # find the most common plane normal direction
     floor_vec = vec_list[np.argmax(np.linalg.norm(vec_list, axis=1))]

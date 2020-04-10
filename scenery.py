@@ -17,11 +17,15 @@ class Scene:
     building : bool (=True)
         True if building is present in the scene. This is used as a size
         reference to more accurately determin scaling.
-    align : bool (=False)
+    align : bool (=True)
         If True, the point cloud will be re-aligned to put the building at the
         centre of the scene, with the table in the x-z plane. If False, this
         alignment must already have been carried out otherwise the
         reconstruction will not be correct.
+    seg_scale : bool (=True)
+        scale parameter to be passed to segmentation function.
+    seg_eps : float (=3)
+        eps parameter to be passed to segmentation function for DBSCAN. 
 
     Properties
     ----------
@@ -51,20 +55,21 @@ class Scene:
     buidling_height = 20  # cm
     scale_factor = 93.9919866538415
 
-    def __init__(self, cloud, build=True, align=False):
+    def __init__(self, cloud, build=True, align=True, seg_scale=True, seg_eps=3):
         # generate labels
-        self.labels, norm = corr.segment(cloud)
+        self.labels, norm = corr.segment(cloud, eps=seg_eps, scale=seg_scale)
         self.cloud = cloud
 
         # align building with origin
         if align:
-            self.cloud = corr.building_align(cloud, self.labels, norm)
+            if build:
+                self.cloud = corr.building_align(cloud, self.labels, norm)
 
         # save building for quick access
         building_label = -1
         self.building = None
-        max_vol = 0
         if build is True:
+            max_vol = 0
             for i in range(self.labels.max()):  # note that this will go up to but not include table
                 cluster = np.where(self.labels == i)[0]
                 cluster = self.cloud.select_down_sample(cluster)
@@ -85,12 +90,14 @@ class Scene:
 
         else:
             R = utils.align_vectors(norm, np.array([0, 1, 0]))
+            self.show_cloud()
             self.cloud.transform(R)
             self.cloud.translate(-self.cloud.get_center())
             table = np.where(self.labels == self.labels.max())[0]
             points = np.asarray(self.cloud.points)
             table_pts = points[table]
             self.cloud.translate(np.array([0, -np.mean(table_pts, axis=0)[1], 0]))
+            self.show_cloud()
 
         self.cloud.scale(Scene.scale_factor, center=False)
         model_labels = [i for i in range(self.labels.max()) if i != building_label]

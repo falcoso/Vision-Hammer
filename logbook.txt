@@ -282,7 +282,7 @@ Created a set of several related point clouds to try registering with open3d.
     sections also.
 
     A lot of the clusters in this new scene are clearly mis-coloured or are
-    artifacts from the table. Will look at how potentially using a colour
+    artefacts from the table. Will look at how potentially using a colour
     histogram to help filter noise could be used, since the material files are
     .png so can also be easily processed for matching.
 
@@ -324,4 +324,7 @@ Created a set of several related point clouds to try registering with open3d.
     Point to plan implemented. It runs at least 5x faster than point to point
     which may be down to the numpy least squares solver being more efficient
     than the svd. It is also much more consistent in its results, providing
-    much tighter alignments which classify correctly!
+    much tighter alignments which classify correctly! This faster alignment
+    also means that the building can be explicitly matched to within a scene
+    in a practical time-frame. Can look at isolating models within a building
+    now.
