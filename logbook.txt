@@ -328,3 +328,14 @@ Created a set of several related point clouds to try registering with open3d.
     also means that the building can be explicitly matched to within a scene
     in a practical time-frame. Can look at isolating models within a building
     now.
+
+10/04/20
+    Created function that finds the circle of the base of the model, this can
+    then be used to work out distances between models in a scene. Had to
+    re-calculate all the transformation matrices for the references models as
+    the .npy files got corrupted, but have now save all the models with that
+    transformation applied so shouldn't be an issue again.
+
+    The inferred radii of the bases show a maximum 2% error in the scaling. This
+    could potentially be used as prior information to get more accurate scaling
+    values

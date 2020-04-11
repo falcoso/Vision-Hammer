@@ -3,7 +3,32 @@ import correspondance as corr
 import copy
 import open3d as o3d
 import numpy as np
+import scipy as sp
 import matplotlib.pyplot as plt
+
+
+def open_refs(file, mesh):
+    model_titles = ["Fireblade", "Fire Warrior", "Commander", "Broadside"]
+    models = {}
+    if mesh:
+        io_func = o3d.io.read_triangle_mesh
+    else:
+        io_func = o3d.io.read_point_cloud
+    for model in model_titles:
+        tms = io_func("./Point Clouds/Ref - Photogrammetry/{}/{}".format(model, file),
+                      print_progress=True)
+        models[model] = tms
+
+    if ".obj" in file:
+        build_ref = io_func("./Point Clouds/Building Ref.ply",
+                            print_progress=True)
+        build_ref.compute_triangle_normals()
+        build_ref.compute_vertex_normals()
+    else:
+        build_ref = io_func("./Point Clouds/Building_1000.ply",
+                            print_progress=True)
+    models["Building"] = build_ref
+    return models
 
 
 class Scene:
@@ -25,7 +50,7 @@ class Scene:
     seg_scale : bool (=True)
         scale parameter to be passed to segmentation function.
     seg_eps : float (=3)
-        eps parameter to be passed to segmentation function for DBSCAN. 
+        eps parameter to be passed to segmentation function for DBSCAN.
 
     Properties
     ----------
@@ -87,6 +112,9 @@ class Scene:
 
             print("Generating Building...")
             self.building = Model(building, "Building")
+            cl = self.building.cluster
+            mesh = copy.deepcopy(Model.ref_clouds["Building"])
+            o3d.visualization.draw_geometries([cl, mesh])
 
         else:
             R = utils.align_vectors(norm, np.array([0, 1, 0]))
@@ -120,6 +148,14 @@ class Scene:
             figures.append(self.building.get_geometry())
         o3d.visualization.draw_geometries(figures)
         return
+
+    def show_matches(self):
+        figures = [i.get_geometry() for i in self.minis]
+        clouds = [i.cluster for i in self.minis]
+        if self.building is not None:
+            figures.append(self.building.get_geometry())
+            clouds.append(self.building.cluster)
+        o3d.visualization.draw_geometries(figures+clouds)
 
     def show_cloud(self, colour_labels=False):
         """
@@ -195,6 +231,7 @@ class Model:
     inchtocm = 2.54
     ref_dict = {}
     ref_clouds = {}
+    ref_circs = {}
     weapons = {"Missile Pod": 36,
                "Pulse Rifle": 30,
                "Markerlight": 36,
@@ -209,20 +246,25 @@ class Model:
                 "Fire Warrior": 7}
 
     def __init__(self, cluster, ref=None, R=None):
-        if Model.ref_dict == {}:
-            print("Loading References...")
-            Model.ref_dict = utils.open_refs()
-            for key, mesh in Model.ref_dict.items():
-                if key != "Building":
-                    Model.ref_clouds[key] = mesh.sample_points_poisson_disk(1000)
-                else:
-                    Model.ref_clouds[key] = mesh.sample_points_poisson_disk(1000)
+        if Model.ref_clouds == {}:
+            print("Loading Reference Clouds...")
+            Model.ref_clouds = open_refs("pcd_1000.ply", False)
+            print("Generating Bases...")
+            for key, pcd in Model.ref_clouds.items():
+                if key == "Building":
+                    pass
+                points = np.asarray(pcd.points)
+                points = points[np.where(points[:,1]<0.5)[0]]
+                points = points[:, ::2]
+                hull = sp.spatial.ConvexHull(points)
+                hull = points[hull.vertices]
+
+                Model.ref_circs[key] = utils.fit_circle(hull)
 
         self.cluster = cluster
         if ref is not None:
             self.ref = ref
             if R is None:
-                print("Going in to cluster building")
                 R, rmse = corr.match_to_model(self.cluster, Model.ref_clouds[ref])
             self.R = R
         else:
@@ -235,6 +277,9 @@ class Model:
     def get_geometry(self):
         """Returns the transformed o3d.geometry of the object."""
         if self.ref is not None:
+            if Model.ref_dict == {}:
+                print("Loading References Meshes...")
+                Model.ref_dict = open_refs("texturedMesh.obj", True)
             geom = copy.deepcopy(Model.ref_dict[self.ref])
             geom.transform(self.R)
         else:

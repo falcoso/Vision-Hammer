@@ -429,19 +429,6 @@ def ransac1d(pts, min_samp, iter):
         return np.mean(pts), []
 
 
-def open_refs():
-    model_titles = ["Fireblade", "Fire Warrior", "Commander", "Broadside"]
-    models = {}
-    for model in model_titles:
-        tms = o3d.io.read_triangle_mesh(
-            "./Point Clouds/Ref - Photogrammetry/{}/texturedMesh.obj".format(model))
-        models[model] = tms
-
-    build_ref = o3d.io.read_triangle_mesh("./Point Clouds/Building Ref.ply")
-    models["Building"] = build_ref
-    return models
-
-
 def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
     """
     Point to point iterative closest point, constrained to rotate about the
@@ -638,7 +625,7 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
         source_c.transform(R0)
         R_old = R0 @ R_old
 
-        if abs(lam[0]) < np.pi*tol:
+        if abs(lam[0]) < np.pi*tol and np.linalg.norm(lam[1:]) < tol:
             break
 
     # get final cost
@@ -660,6 +647,22 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
     return R_old, final_cost
 
 def fit_circle(pts):
+    """
+    Calculates the centre and radius of a set of points on a circle using a
+    Kasa fit.
+
+    Parameters
+    ----------
+    pts : np.array(N,2) float
+        2D set of points on which to fit the circle.
+
+    Returns
+    -------
+    c : np.array(2) float
+        2D point locating the centre of the circle
+    r : float
+        Radius of the circle.
+    """
     # add column of ones
     A = np.concatenate((pts, np.ones((pts.shape[0], 1))), 1)
     b = -np.einsum('ij,ij->i', pts, pts)
@@ -668,4 +671,4 @@ def fit_circle(pts):
     b = -lam[1]/2
     r = (lam[0]**2 + lam[1]**2 -4*lam[2])/4
     r = np.sqrt(r)
-    return np.array([b,a]), r
+    return np.array([a,b]), r
