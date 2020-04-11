@@ -339,3 +339,8 @@ Created a set of several related point clouds to try registering with open3d.
     The inferred radii of the bases show a maximum 2% error in the scaling. This
     could potentially be used as prior information to get more accurate scaling
     values
+
+11/04/20
+    Looked into improving correspondence in point to plane, by finding say 30
+    nearest points and then matching normals but this greatly slowed down the
+    algorithm without improving the matches or convergence that much.

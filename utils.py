@@ -428,6 +428,21 @@ def ransac1d(pts, min_samp, iter):
     except UnboundLocalError:
         return np.mean(pts), []
 
+def _icp_correspondance(source, target_tree):
+    """Picks correspondance under current transformation."""
+    ids = -np.ones(len(source.points), dtype=int)
+    for i in range(len(source.points)):
+        k, id, _ = target_tree.search_knn_vector_3d(source.points[i], 1)
+        ids[i] = np.asarray(id)[0]
+    return ids
+
+def _icp_get_inliers(xs, ts):
+    """Filters points more than 2*mad from the median."""
+    residuals = np.linalg.norm(xs-ts, axis=1)
+    i_residuals = np.argsort(residuals)
+    inliers = i_residuals[:int(0.8*len(residuals))]
+    inliers = np.sort(inliers)
+    return inliers
 
 def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
     """
@@ -457,22 +472,6 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
     """
     target_tree = o3d.geometry.KDTreeFlann(target)
 
-    def correspondance(source, target):
-        """Picks correspondance under current transformation."""
-        ids = -np.ones(len(source.points), dtype=int)
-        for i in range(len(source.points)):
-            k, id, _ = target_tree.search_knn_vector_3d(source.points[i], 1)
-            ids[i] = np.asarray(id)[0]
-        return ids
-
-    def get_inliers(xs, ts):
-        """Filters points more than 2*mad from the median."""
-        residuals = np.linalg.norm(xs-ts, axis=1)
-        i_residuals = np.argsort(residuals)
-        inliers = i_residuals[:int(0.8*len(residuals))]
-        inliers = np.sort(inliers)
-        return inliers
-
     R_old = np.array([[np.cos(theta),  0, np.sin(theta), 0],
                       [0,              1,             0, 0],
                       [-np.sin(theta), 0, np.cos(theta), 0],
@@ -483,13 +482,13 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
 
     for i in range(iter):
         # get correspondance
-        ids = correspondance(source_c, target_tree)
+        ids = _icp_correspondance(source_c, target_tree)
 
         # filter outliers
         xs = np.asarray(source_c.points)
         ts = target_points[ids]
 
-        inliers = get_inliers(xs, ts)
+        inliers = _icp_get_inliers(xs, ts)
         xs = xs[inliers]
         ts = ts[inliers]
         # trans = np.mean(xs-ts, axis=0)
@@ -521,13 +520,13 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
     # get final cost
     source_c = deepcopy(source)
     source_c.transform(R_old)
-    ids = correspondance(source_c, target_tree)
+    ids = _icp_correspondance(source_c, target_tree)
 
     # filter outliers
     xs = np.asarray(source_c.points)
     ts = target_points[ids]
 
-    inliers = get_inliers(xs, ts)
+    inliers = _icp_get_inliers(xs, ts)
     xs = xs[inliers]
     ts = ts[inliers]
 
@@ -568,22 +567,6 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
     if not target.has_normals():
         target.estimate_normals()
 
-    def correspondance(source, target):
-        """Picks correspondance under current transformation."""
-        ids = -np.ones(len(source.points), dtype=int)
-        for i in range(len(source.points)):
-            k, id, _ = target_tree.search_knn_vector_3d(source.points[i], 1)
-            ids[i] = np.asarray(id)[0]
-        return ids
-
-    def get_inliers(xs, ts):
-        """Filters points more than 2*mad from the median."""
-        residuals = np.linalg.norm(xs-ts, axis=1)
-        i_residuals = np.argsort(residuals)
-        inliers = i_residuals[:int(0.8*len(residuals))]
-        inliers = np.sort(inliers)
-        return inliers
-
     R_old = np.array([[np.cos(theta),  0, np.sin(theta), 0],
                       [0,              1,             0, 0],
                       [-np.sin(theta), 0, np.cos(theta), 0],
@@ -595,14 +578,14 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
 
     for i in range(iter):
         # get correspondance
-        ids = correspondance(source_c, target_tree)
+        ids = _icp_correspondance(source_c, target_tree)
 
         # filter outliers
         xs = np.asarray(source_c.points)
         ts = target_points[ids]
         ns = target_norms[ids]
 
-        inliers = get_inliers(xs, ts)
+        inliers = _icp_get_inliers(xs, ts)
         xs = xs[inliers]
         ts = ts[inliers]
         ns = ns[inliers]
@@ -631,14 +614,14 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
     # get final cost
     source_c = deepcopy(source)
     source_c.transform(R_old)
-    ids = correspondance(source_c, target_tree)
+    ids = _icp_correspondance(source_c, target_tree)
 
     # filter outliers
     xs = np.asarray(source_c.points)
     ts = target_points[ids]
     ns = target_norms[ids]
 
-    inliers = get_inliers(xs, ts)
+    inliers = _icp_get_inliers(xs, ts)
     xs = xs[inliers]
     ts = ts[inliers]
     ns = ns[inliers]

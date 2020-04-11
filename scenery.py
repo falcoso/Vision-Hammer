@@ -85,15 +85,12 @@ class Scene:
         self.labels, norm = corr.segment(cloud, eps=seg_eps, scale=seg_scale)
         self.cloud = cloud
 
-        # align building with origin
-        if align:
-            if build:
-                self.cloud = corr.building_align(cloud, self.labels, norm)
-
         # save building for quick access
         building_label = -1
         self.building = None
-        if build is True:
+        if build:
+            if align:
+                self.cloud = corr.building_align(cloud, self.labels, norm)
             max_vol = 0
             for i in range(self.labels.max()):  # note that this will go up to but not include table
                 cluster = np.where(self.labels == i)[0]
@@ -112,9 +109,6 @@ class Scene:
 
             print("Generating Building...")
             self.building = Model(building, "Building")
-            cl = self.building.cluster
-            mesh = copy.deepcopy(Model.ref_clouds["Building"])
-            o3d.visualization.draw_geometries([cl, mesh])
 
         else:
             R = utils.align_vectors(norm, np.array([0, 1, 0]))
@@ -266,7 +260,7 @@ class Model:
             self.ref = ref
             if R is None:
                 R, rmse = corr.match_to_model(self.cluster, Model.ref_clouds[ref])
-            self.R = R
+            self.R = np.linalg.inv(R)
         else:
             if R is None:
                 R = np.identity(4)

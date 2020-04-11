@@ -21,6 +21,7 @@ remove_planes - Removes any planes from a scene.
 import open3d as o3d
 import numpy as np
 import scipy as sp
+import matplotlib.pyplot as plt
 import utils
 
 from tqdm import tqdm
@@ -479,6 +480,9 @@ def building_align(pcd, labels, norm):
     # fit building corners
     # Project points onto x-z plane
     points = np.asarray(building.points)
+
+    # get rid of any base that might be included
+    points = points[np.where(points[:,1] > 0.1*points[:,1].max())[0]]
     points = points[:, ::2]
     points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
     hull = sp.spatial.ConvexHull(points[:, :2])
@@ -493,6 +497,7 @@ def building_align(pcd, labels, norm):
         hull_pts = np.asarray(x.points)
     hull_pts = hull_pts[:, :2]
 
+    # 90 degree rotation to get second normal from original normal
     R = np.array([[0, -1],
                   [1, 0]])
     n, alpha, ind1, ind2, cost = utils.fit_corner(hull_pts)
@@ -546,7 +551,7 @@ def match_model(clusters, model_clouds):
                                                   ref_heights,
                                                   ref_vols):
             if height > 0.6*ref_height and 1.2*ref_height > height:
-                vol = cluster.get_oriented_bounding_box().volume()
+                # vol = cluster.get_oriented_bounding_box().volume()
                 # if vol < 2*ref_vol and vol > 0.3*ref_vol:
                 matches.append(key)
 
