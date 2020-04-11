@@ -343,4 +343,10 @@ Created a set of several related point clouds to try registering with open3d.
 11/04/20
     Looked into improving correspondence in point to plane, by finding say 30
     nearest points and then matching normals but this greatly slowed down the
-    algorithm without improving the matches or convergence that much.
+    algorithm without improving the matches or convergence that much. Largely,
+    this will be down to the fact that more of the correspondence function then
+    has to be implemented in python, and not necessarily it converging slower.
+
+    Fit corner was made more robust by initialising the vector based on a line
+    fit for all the points. The classification was also tweaked to take into
+    account the fact the points form a corner rather than 2 perpendicular lines

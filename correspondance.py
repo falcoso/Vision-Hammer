@@ -481,19 +481,22 @@ def building_align(pcd, labels, norm):
     # Project points onto x-z plane
     points = np.asarray(building.points)
 
+    # use height to scale length when selecting hull points
+    height = points[:,1].max()
+
     # get rid of any base that might be included
-    points = points[np.where(points[:,1] > 0.1*points[:,1].max())[0]]
+    points = points[np.where(points[:,1] > 0.2*points[:,1].max())[0]]
     points = points[:, ::2]
     points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
     hull = sp.spatial.ConvexHull(points[:, :2])
     hull_pts = points[hull.vertices]
 
     # iterate convex hulls until we have at least 50 points to fit
-    while len(hull_pts) < 50:
+    while len(hull_pts) < 100:
         points = np.delete(points, hull.vertices, axis=0)
         hull = sp.spatial.ConvexHull(points[:, :2])
         hull_pts = np.append(hull_pts, points[hull.vertices], axis=0)
-        x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(0.01)
+        x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(1/height)
         hull_pts = np.asarray(x.points)
     hull_pts = hull_pts[:, :2]
 

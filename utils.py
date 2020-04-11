@@ -23,11 +23,7 @@ crop_distance - Crops a cloud to everything less than <region> from the
 create_origin_plane - Creates plane aligned with origin and normal in y
     direction.
 
-fit_corner - Finds the equations of 2 perpendicular lines that fit an unlabelled
-    set of points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by
-    minimising least squares error.
-
-fit_corner2 - Finds the equations of 2 perpendicular lines that fit an
+fit_corner - Finds the equations of 2 perpendicular lines that fit an
     unlabelled set of points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found
     by RANSAC and least squares.
 """
@@ -296,10 +292,8 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
     ransac = linear_model.RANSACRegressor()
     if n is None:
         top = True
-        n = np.random.rand(2)  # arbitrary starting vector
-        n /= np.linalg.norm(n)
-        dist = n @ mean_pts  # scale to pass through points
-        n /= dist
+        # start off by fitting RANSAC line to all points
+        n, inliers1 = fit_ransac(pts, ransac)
         alpha = R @ n @ mean_pts  # alpha scales second line
     else:
         top = False
@@ -308,12 +302,34 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
     n2 = (R @ n)/alpha
     for i in range(max_iter):
         # calculate distance to lines
-        l1 = np.abs(pts @ n1 - 1)/np.linalg.norm(n1)
-        l2 = np.abs(pts @ n2 - 1)/np.linalg.norm(n2)
+        l1 = (pts @ n1 - 1)/np.linalg.norm(n1)
+        l2 = (pts @ n2 - 1)/np.linalg.norm(n2)
 
         # get indexes closest to each line
-        ind1 = np.where(l1 < l2)[0]
-        ind2 = np.where(l1 > l2)[0]
+        l1_abs = np.abs(l1)
+        l2_abs = np.abs(l2)
+        ind1 = np.where(l1_abs < l2_abs)[0]
+        ind2 = np.where(l1_abs > l2_abs)[0]
+
+        x1s = pts[ind1]
+        x2s = pts[ind2]
+
+        # switch over all those in the corners
+        x1_mean = np.mean(x1s, axis=0)
+        x2_mean = np.mean(x2s, axis=0)
+        side_1 = np.sign(x1_mean @ n2 - 1)
+        side_2 = np.sign(x2_mean @ n1 - 1)
+
+        switch_1 = np.where((l2[ind1]*side_1 < 0) & (l1[ind1]*side_2 > 0))[0]
+        switch_2 = np.where((l1[ind2]*side_2 < 0) & (l2[ind2]*side_1 > 0))[0]
+
+        change_1 = ind1[switch_1]
+        change_2 = ind2[switch_2]
+
+        ind1 = np.delete(ind1, switch_1)
+        ind2 = np.delete(ind2, switch_2)
+        ind1 = np.append(ind1, change_2)
+        ind2 = np.append(ind2, change_1)
 
         x1s = pts[ind1]
         x2s = pts[ind2]
@@ -345,7 +361,7 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
 
     c1 = inliers1 @ n - 1
     c2 = (inliers2 @ R @ n)/alpha - 1
-    cost = c1.T @ c1 + c2.T @ c2
+    cost = (c1.T @ c1)/len(inliers1) + (c2.T @ c2)/len(inliers2)
 
     # since solution is not symmetric, repeat with optimal n rotated and pick
     # best fit
