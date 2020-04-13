@@ -262,7 +262,7 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         set of m 2d points to be fit
     max_iter : int
         Maximum number of iterations to carry out the fitting
-    tol : float < 1
+    tol : float +ve < 1
         Maximum percentage change in parameters in each loop before breaking
         iteration early
 
@@ -274,35 +274,56 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         scalar for perpendicular line.
     """
     # define utility function for getting ransac results
-    def fit_ransac(x1s, ransac):
+    def fit_ransac(x1s):
+        ransac = linear_model.RANSACRegressor(min_samples=4)
         x1 = x1s[:, 0].reshape(-1, 1)
         y1 = x1s[:, 1].reshape(-1, 1)
         ransac.fit(x1, y1)
-        inliers1 = x1s[ransac.inlier_mask_]
         n = np.array([ransac.estimator_.coef_, ransac.estimator_.intercept_])
         n = n.flatten()
         n = np.array([-n[0]/n[1], 1/n[1]])
-        return n, inliers1
+        return n, np.where(ransac.inlier_mask_)[0]
 
     # put intitial intersection at centroid
-    mean_pts = np.mean(pts, axis=0)
+    # mean_pts = np.mean(pts, axis=0)
     R = np.array([[0., -1.],  # 90 degree rotation matrix
                   [1., 0.]])
 
-    ransac = linear_model.RANSACRegressor()
+    R45 = np.array([[1., -1.],  # 90 degree rotation matrix
+                    [1., 1.]])
+    R45 *= 1/np.sqrt(2)
+
     if n is None:
         top = True
         # start off by fitting RANSAC line to all points
-        n, inliers1 = fit_ransac(pts, ransac)
-        alpha = R @ n @ mean_pts  # alpha scales second line
+        n, inliers1 = fit_ransac(pts)
+        alpha, inliers2in = ransac1d(pts @ R @ n/np.linalg.norm(n), 3, 50)
+        alpha *= np.linalg.norm(n)
     else:
         top = False
 
-    n1 = n
     n2 = (R @ n)/alpha
     for i in range(max_iter):
         # calculate distance to lines
-        l1 = (pts @ n1 - 1)/np.linalg.norm(n1)
+        # c = np.linalg.inv(np.array([n, n2])) @ np.ones(2)
+        # bisec = R45 @ n
+        # bisec /= np.linalg.norm(bisec)
+        # dot_match = pts @ bisec - c @ bisec
+        # ind1a = np.where(dot_match < 0)[0]
+        # ind2a = np.where(dot_match > 0)[0]
+        #
+        # bisec = R45.T @ n
+        # dot_match = pts @ bisec - c @ bisec
+        # ind1b = np.where(dot_match < 0)[0]
+        # ind2b = np.where(dot_match > 0)[0]
+        # if abs(len(ind1a)-len(ind2a)) < abs(len(ind1b)-len(ind2b)):
+        #     ind1 = ind1a
+        #     ind2 = ind2a
+        # else:
+        #     print("Using other one?")
+        #     ind1 = ind1b
+        #     ind2 = ind2b
+        l1 = (pts @ n - 1)/np.linalg.norm(n)
         l2 = (pts @ n2 - 1)/np.linalg.norm(n2)
 
         # get indexes closest to each line
@@ -315,21 +336,24 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         x2s = pts[ind2]
 
         # switch over all those in the corners
-        x1_mean = np.mean(x1s, axis=0)
-        x2_mean = np.mean(x2s, axis=0)
-        side_1 = np.sign(x1_mean @ n2 - 1)
-        side_2 = np.sign(x2_mean @ n1 - 1)
+        try:
+            x1_mean = np.mean(x1s, axis=0)
+            x2_mean = np.mean(x2s, axis=0)
+            side_1 = np.sign(x1_mean @ n2 - 1)
+            side_2 = np.sign(x2_mean @ n - 1)
 
-        switch_1 = np.where((l2[ind1]*side_1 < 0) & (l1[ind1]*side_2 > 0))[0]
-        switch_2 = np.where((l1[ind2]*side_2 < 0) & (l2[ind2]*side_1 > 0))[0]
+            switch_1 = np.where((l2[ind1]*side_1 < 0) & (l1[ind1]*side_2 > 0))[0]
+            switch_2 = np.where((l1[ind2]*side_2 < 0) & (l2[ind2]*side_1 > 0))[0]
 
-        change_1 = ind1[switch_1]
-        change_2 = ind2[switch_2]
+            change_1 = ind1[switch_1]
+            change_2 = ind2[switch_2]
 
-        ind1 = np.delete(ind1, switch_1)
-        ind2 = np.delete(ind2, switch_2)
-        ind1 = np.append(ind1, change_2)
-        ind2 = np.append(ind2, change_1)
+            ind1 = np.delete(ind1, switch_1)
+            ind2 = np.delete(ind2, switch_2)
+            ind1 = np.append(ind1, change_2)
+            ind2 = np.append(ind2, change_1)
+        except Warning:
+            pass
 
         x1s = pts[ind1]
         x2s = pts[ind2]
@@ -337,31 +361,42 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         n_old = n
 
         try:
-            n, inliers1 = fit_ransac(x1s, ransac)
+            n, inliers1in = fit_ransac(x1s)
+            inliers1 = x1s[inliers1in]
             if len(x2s) < 3:
-                x2s = np.append(x2s, pts[ind1[np.logical_not(ransac.inlier_mask_)]], axis=0)
+                x2s = np.append(x2s, np.delete(x1s, inliers1in, 0), axis=0)
         except ValueError:
             pass
 
         alpha_old = alpha
-        n1 = n
-        alpha, inliers2in = ransac1d(x2s @ R @ n, 3, 50)
+        alpha, inliers2in = ransac1d(x2s @ R @ n/np.linalg.norm(n), 3, 50)
+        alpha *= np.linalg.norm(n)
         inliers2 = x2s[inliers2in]
         # error would have been raised above if this is true so new n has not
         # been calculated
         if len(x1s) < 3:
             x1s = np.append(x1s, np.delete(x2s, inliers2in, 0), axis=0)
-            if len(x1s) >= 3:
-                n, inliers1 = fit_ransac(x1s, ransac)
+            if len(x1s) >= 2:
+                n, inliers1 = fit_ransac(x1s)
 
         if abs(alpha_old-alpha)/alpha_old < tol and  \
                 abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
             break
         n2 = (R @ n)/alpha
 
+    print("Original inliers 2 length {}".format(len(inliers2)))
     c1 = inliers1 @ n - 1
     c2 = (inliers2 @ R @ n)/alpha - 1
     cost = (c1.T @ c1)/len(inliers1) + (c2.T @ c2)/len(inliers2)
+
+    # n_new, i = fit_ransac(x2s, ransac)
+    # alpha_new, inliers2in = ransac1d(x1s @ R @ n_new/ np.linalg.norm(n_new), 3, 50)
+    # alpha_new *= np.linalg.norm(n_new)
+    # j = x1s[inliers2in]
+    # c1 = i @ n_new - 1
+    # c2 = (j @ R @ n_new)/alpha_new - 1
+    # cost2 = (c1.T @ c1)/len(i) + (c2.T @ c2)/len(j)
+    # print("Swapped inliers 2 length {}".format(len(j)))
 
     # since solution is not symmetric, repeat with optimal n rotated and pick
     # best fit
@@ -369,23 +404,22 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         n_new, alpha_new, i, j, cost2 = fit_corner(pts, n=(R @ n)/alpha,
                                                    alpha=np.linalg.norm(n)/alpha)
         if cost2 < cost:
+            print("FLIPPED")
             n = n_new
             alpha = alpha_new
-            ind1 = i
-            ind2 = j
+            inliers1 = i
+            inliers2 = j
             cost = cost2
 
         # set up return convention
-        return_set = [(n, alpha, ind1, ind2, cost),
-                      ((R @ n)/alpha, -1/alpha, ind2, ind1, cost)]
+        return_set = [(n, alpha, inliers1, inliers2, cost),
+                      ((R @ n)/alpha, -1/alpha, inliers2, inliers1, cost)]
 
         n2 = (R @ n)/alpha
         intersection = np.linalg.inv(np.array([n, n2])) @ np.ones(2)
-        pts_copy = deepcopy(pts)
-        pts_copy -= intersection
         ang = np.zeros(2)
-        mean1 = np.mean(pts_copy[ind1], axis=0)
-        mean2 = np.mean(pts_copy[ind2], axis=0)
+        mean1 = np.mean(inliers1-intersection, axis=0)
+        mean2 = np.mean(inliers2-intersection, axis=0)
         ang[0] = cmath.polar(complex(*mean1))[1]
         ang[1] = cmath.polar(complex(*mean2))[1]
 
@@ -395,12 +429,15 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
                 if ang[i] < 0:
                     ang[i] += 2*np.pi
 
+        print("Return set:")
+        print(np.argmin(ang))
+        print("Returned inliers 2 length: {}".format(len(return_set[np.argmin(ang)][3])))
         return return_set[np.argmin(ang)]
 
-    return n, alpha, ind1, ind2, cost
+    return n, alpha, inliers1, inliers2, cost
 
 
-def ransac1d(pts, min_samp, iter):
+def ransac1d(pts, min_samp, iter, mads=None):
     """
     Returns the mean of the points calculated using RANSAC
 
@@ -421,6 +458,7 @@ def ransac1d(pts, min_samp, iter):
         Indicies of the inliers in the input points.
     """
     score_best = np.inf
+    # min_samp = 500
 
     # if special.comb(len(pts), min_samp, exact=True) < iter:
     #     combs = np.array(combinations(pts, min_samp))
@@ -428,21 +466,23 @@ def ransac1d(pts, min_samp, iter):
     # else:
     samples = np.mean(np.random.choice(pts, (min_samp, iter)), axis=0)
 
-    mads = stats.median_absolute_deviation(pts)
+    if mads is None:
+        # mads = stats.median_absolute_deviation(pts)
+        mads = 0.01
     for alpha in samples:
         residuals = np.abs(pts - alpha)
-        inliers = np.where(residuals < 3*mads)[0]
-        if len(inliers)/len(pts) < 0.5:
+        inliers = np.where(residuals < mads)[0]
+        if len(inliers) < min_samp:
             continue
-        score = np.linalg.norm(residuals[inliers])**2
+        score = np.linalg.norm(residuals[inliers])**2/len(inliers)
         if score < score_best:
             score_best = score
             inliers_best = inliers
 
     try:
-        return np.mean(pts[inliers_best]), inliers
+        return np.mean(pts[inliers_best]), inliers_best
     except UnboundLocalError:
-        return np.mean(pts), []
+        return np.mean(pts), np.arange(len(pts))
 
 def _icp_correspondance(source, target_tree):
     """Picks correspondance under current transformation."""
