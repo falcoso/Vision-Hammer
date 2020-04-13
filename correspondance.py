@@ -488,16 +488,18 @@ def building_align(pcd, labels, norm):
     points = points[np.where(points[:,1] > 0.2*points[:,1].max())[0]]
     points = points[:, ::2]
     points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
+
+    # downsample top down view as compressed slice will be dense and hull sparse
+    x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points)).voxel_down_sample(25/height)
+    points = np.asarray(x.points)
     hull = sp.spatial.ConvexHull(points[:, :2])
     hull_pts = points[hull.vertices]
 
     # iterate convex hulls until we have at least 50 points to fit
-    while len(hull_pts) < 100:
+    while len(hull_pts) < 50:
         points = np.delete(points, hull.vertices, axis=0)
         hull = sp.spatial.ConvexHull(points[:, :2])
         hull_pts = np.append(hull_pts, points[hull.vertices], axis=0)
-        x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(hull_pts)).voxel_down_sample(1/height)
-        hull_pts = np.asarray(x.points)
     hull_pts = hull_pts[:, :2]
 
     # 90 degree rotation to get second normal from original normal

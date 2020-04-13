@@ -349,4 +349,19 @@ Created a set of several related point clouds to try registering with open3d.
 
     Fit corner was made more robust by initialising the vector based on a line
     fit for all the points. The classification was also tweaked to take into
-    account the fact the points form a corner rather than 2 perpendicular lines
+    account the fact the points form a corner rather than 2 perpendicular lines.
+
+13/04/20
+    Realised that the RANSAC regressor used to fit the model uses f(x)-y to
+    classify inliers rather than a geometric distance.
+    The following improvements have been made:
+    - Geometric RANSAC regressor rather than the OLS RANSAC from scikitlearn to
+      fit the lines
+    - Threshold for inliers set at fixed value to tighten matches rather than
+      use MADS
+    - Fixed error in 1d RANSAC to maximise the number of inliers.
+    - Classification is done by bisecting the points with a line at 45 degrees.
+      This is done at both +ve and -ve 45 degrees, prioritising similarly
+      sized number of points in each group.
+    - Downsample is done BEFORE taking the convex hull to get a much better
+      spread of data that is more evenly spread along the edge.

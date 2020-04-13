@@ -30,10 +30,12 @@ fit_corner - Finds the equations of 2 perpendicular lines that fit an
 
 import open3d as o3d
 import numpy as np
+import scipy as sp
 import cmath
-from sklearn import linear_model
+
 from scipy import stats
 from copy import deepcopy
+from itertools import combinations
 
 
 def hist_normals(normals, bin_size=0.95):
@@ -250,7 +252,7 @@ def colour_labels(pcd, labels):
     return pcd
 
 
-def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
+def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
     """
     Finds the equations of 2 perpendicular lines that fit an unlabelled set of
     points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
@@ -272,20 +274,14 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         2d array for vector equation
     alpha : float
         scalar for perpendicular line.
+    inliers1 : np.array(int)
+        Inlier points that fit to pts @ n =1
+    inliers2 : np.array(int)
+        Inlier points that fit to pts @ R @ n/alpha = 1
+    cost : float
+        Final value of the Geometric Least Squares cost function
     """
-    # define utility function for getting ransac results
-    def fit_ransac(x1s):
-        ransac = linear_model.RANSACRegressor(min_samples=4)
-        x1 = x1s[:, 0].reshape(-1, 1)
-        y1 = x1s[:, 1].reshape(-1, 1)
-        ransac.fit(x1, y1)
-        n = np.array([ransac.estimator_.coef_, ransac.estimator_.intercept_])
-        n = n.flatten()
-        n = np.array([-n[0]/n[1], 1/n[1]])
-        return n, np.where(ransac.inlier_mask_)[0]
-
     # put intitial intersection at centroid
-    # mean_pts = np.mean(pts, axis=0)
     R = np.array([[0., -1.],  # 90 degree rotation matrix
                   [1., 0.]])
 
@@ -293,110 +289,88 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
                     [1., 1.]])
     R45 *= 1/np.sqrt(2)
 
+    n_thresh = 1
+    n_min_samp = 2
+    n_iter = 1000
+    alpha_thresh = None
+    alpha_min_samp = 3
+    alpha_iter = 500
+    mode = 1
+
     if n is None:
         top = True
         # start off by fitting RANSAC line to all points
-        n, inliers1 = fit_ransac(pts)
-        alpha, inliers2in = ransac1d(pts @ R @ n/np.linalg.norm(n), 3, 50)
+        n, inliers1in = ransac2d(pts, n_min_samp, n_iter, n_thresh)
+
+        # use only the outliers to initialise alpha
+        x2s = np.delete(pts, inliers1in, 0)
+        alpha, inliers2in = ransac1d(x2s @ R @ n/np.linalg.norm(n), alpha_min_samp, alpha_iter, alpha_thresh)
         alpha *= np.linalg.norm(n)
     else:
         top = False
 
-    n2 = (R @ n)/alpha
+    # MAIN FUNCTION LOOP
+    n_old = np.ones((2, 2))*0.01  # make small so exit isn't done on first step
+    alpha_old = np.ones(2)*0.01
     for i in range(max_iter):
-        # calculate distance to lines
-        # c = np.linalg.inv(np.array([n, n2])) @ np.ones(2)
-        # bisec = R45 @ n
-        # bisec /= np.linalg.norm(bisec)
-        # dot_match = pts @ bisec - c @ bisec
-        # ind1a = np.where(dot_match < 0)[0]
-        # ind2a = np.where(dot_match > 0)[0]
-        #
-        # bisec = R45.T @ n
-        # dot_match = pts @ bisec - c @ bisec
-        # ind1b = np.where(dot_match < 0)[0]
-        # ind2b = np.where(dot_match > 0)[0]
-        # if abs(len(ind1a)-len(ind2a)) < abs(len(ind1b)-len(ind2b)):
-        #     ind1 = ind1a
-        #     ind2 = ind2a
-        # else:
-        #     print("Using other one?")
-        #     ind1 = ind1b
-        #     ind2 = ind2b
-        l1 = (pts @ n - 1)/np.linalg.norm(n)
-        l2 = (pts @ n2 - 1)/np.linalg.norm(n2)
-
-        # get indexes closest to each line
-        l1_abs = np.abs(l1)
-        l2_abs = np.abs(l2)
-        ind1 = np.where(l1_abs < l2_abs)[0]
-        ind2 = np.where(l1_abs > l2_abs)[0]
-
+        # bisect points between corner
+        n2 = (R @ n)/alpha
+        c = np.linalg.inv(np.array([n, n2])) @ np.ones(2)
+        bisec = R45 @ n
+        dot_match = pts @ bisec - c @ bisec
+        ind1 = np.where(dot_match > 0)[0]
+        ind2 = np.where(dot_match < 0)[0]
+        bisec = R45.T @ n
+        dot_match = pts @ bisec - c @ bisec
+        ind1b = np.where(dot_match > 0)[0]
+        ind2b = np.where(dot_match < 0)[0]
+        if abs(len(ind1)-len(ind2)) > abs(len(ind1b)-len(ind2b)):
+            ind1 = ind1b
+            ind2 = ind2b
         x1s = pts[ind1]
         x2s = pts[ind2]
 
-        # switch over all those in the corners
-        try:
-            x1_mean = np.mean(x1s, axis=0)
-            x2_mean = np.mean(x2s, axis=0)
-            side_1 = np.sign(x1_mean @ n2 - 1)
-            side_2 = np.sign(x2_mean @ n - 1)
+        n_old[1] = n_old[0]
+        n_old[0] = n
 
-            switch_1 = np.where((l2[ind1]*side_1 < 0) & (l1[ind1]*side_2 > 0))[0]
-            switch_2 = np.where((l1[ind2]*side_2 < 0) & (l2[ind2]*side_1 > 0))[0]
-
-            change_1 = ind1[switch_1]
-            change_2 = ind2[switch_2]
-
-            ind1 = np.delete(ind1, switch_1)
-            ind2 = np.delete(ind2, switch_2)
-            ind1 = np.append(ind1, change_2)
-            ind2 = np.append(ind2, change_1)
-        except Warning:
-            pass
-
-        x1s = pts[ind1]
-        x2s = pts[ind2]
-
-        n_old = n
-
-        try:
-            n, inliers1in = fit_ransac(x1s)
+        # fit n
+        if len(x1s) >= n_min_samp:
+            n, inliers1in = ransac2d(x1s, n_min_samp, n_iter, n_thresh)
             inliers1 = x1s[inliers1in]
             if len(x2s) < 3:
                 x2s = np.append(x2s, np.delete(x1s, inliers1in, 0), axis=0)
-        except ValueError:
-            pass
 
-        alpha_old = alpha
-        alpha, inliers2in = ransac1d(x2s @ R @ n/np.linalg.norm(n), 3, 50)
+        alpha_old[1] = alpha_old[0]
+        alpha_old[0] = alpha
+        alpha, inliers2in = ransac1d(x2s @ R @ n/np.linalg.norm(n),
+                                     alpha_min_samp, alpha_iter, alpha_thresh)
         alpha *= np.linalg.norm(n)
         inliers2 = x2s[inliers2in]
-        # error would have been raised above if this is true so new n has not
-        # been calculated
-        if len(x1s) < 3:
+
+        # fit alpha
+        if len(x1s) < n_min_samp:
             x1s = np.append(x1s, np.delete(x2s, inliers2in, 0), axis=0)
-            if len(x1s) >= 2:
-                n, inliers1 = fit_ransac(x1s)
+            if len(x1s) >= n_min_samp:
+                n, inliers1in = ransac2d(x1s, n_min_samp, n_iter, n_thresh)
+                inliers1 = x1s[inliers1in]
+            else:
+                raise RuntimeError("Unable to assign enough points to the line")
 
-        if abs(alpha_old-alpha)/alpha_old < tol and  \
-                abs(np.linalg.norm(n-n_old))/np.linalg.norm(n_old) < tol:
+        # exit conditions
+        if abs(alpha_old[0]-alpha)/alpha_old[0] < tol and  \
+                abs(np.linalg.norm(n-n_old[0]))/np.linalg.norm(n_old[0]) < tol:
             break
-        n2 = (R @ n)/alpha
+        elif abs(alpha_old[1]-alpha)/alpha_old[1] < tol and  \
+                abs(np.linalg.norm(n-n_old[1]))/np.linalg.norm(n_old[1]) < tol:
+            if mode == 0:
+                mode = 1
+            else:
+                break
 
-    print("Original inliers 2 length {}".format(len(inliers2)))
+    # calculate costs on final values
     c1 = inliers1 @ n - 1
     c2 = (inliers2 @ R @ n)/alpha - 1
     cost = (c1.T @ c1)/len(inliers1) + (c2.T @ c2)/len(inliers2)
-
-    # n_new, i = fit_ransac(x2s, ransac)
-    # alpha_new, inliers2in = ransac1d(x1s @ R @ n_new/ np.linalg.norm(n_new), 3, 50)
-    # alpha_new *= np.linalg.norm(n_new)
-    # j = x1s[inliers2in]
-    # c1 = i @ n_new - 1
-    # c2 = (j @ R @ n_new)/alpha_new - 1
-    # cost2 = (c1.T @ c1)/len(i) + (c2.T @ c2)/len(j)
-    # print("Swapped inliers 2 length {}".format(len(j)))
 
     # since solution is not symmetric, repeat with optimal n rotated and pick
     # best fit
@@ -404,7 +378,6 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
         n_new, alpha_new, i, j, cost2 = fit_corner(pts, n=(R @ n)/alpha,
                                                    alpha=np.linalg.norm(n)/alpha)
         if cost2 < cost:
-            print("FLIPPED")
             n = n_new
             alpha = alpha_new
             inliers1 = i
@@ -429,15 +402,12 @@ def fit_corner(pts, max_iter=500, tol=0.01, n=None, alpha=None):
                 if ang[i] < 0:
                     ang[i] += 2*np.pi
 
-        print("Return set:")
-        print(np.argmin(ang))
-        print("Returned inliers 2 length: {}".format(len(return_set[np.argmin(ang)][3])))
         return return_set[np.argmin(ang)]
 
     return n, alpha, inliers1, inliers2, cost
 
 
-def ransac1d(pts, min_samp, iter, mads=None):
+def ransac1d(pts, min_samp=1, iter=100, mads=None):
     """
     Returns the mean of the points calculated using RANSAC
 
@@ -445,10 +415,14 @@ def ransac1d(pts, min_samp, iter, mads=None):
     ----------
     pts : np.array
         1d array of data points
-    min_samp : int
-        Minimum number of points to calculate the mean from
-    iter : int
-        Number of iterations to test for.
+    min_samp : int (=1)
+        Minimum number of points to calculate the mean.
+    iter : int (=100)
+        Number of iterations to test for. If iterations exceed number of
+        possible sample combinations then all combinations are tested.
+    thresh : float (=None)
+        Maximum deviation from the mean to still be classed as an inlier. If
+        None, than the median_absolute_deviation is used as the threshold
 
     Returns
     -------
@@ -457,32 +431,85 @@ def ransac1d(pts, min_samp, iter, mads=None):
     inliers : np.array(int)
         Indicies of the inliers in the input points.
     """
-    score_best = np.inf
-    # min_samp = 500
+    inliers_best = []
 
-    # if special.comb(len(pts), min_samp, exact=True) < iter:
-    #     combs = np.array(combinations(pts, min_samp))
-    #     samples = np.mean(combs)
-    # else:
-    samples = np.mean(np.random.choice(pts, (min_samp, iter)), axis=0)
+    if sp.special.comb(len(pts), min_samp, exact=True) < iter:
+        samples = (np.mean(pts[list(i)]) for i in combinations(np.arange(len(pts)), min_samp))
+    else:
+        samples = np.mean(np.random.choice(pts, (iter, min_samp)), axis=1)
 
     if mads is None:
-        # mads = stats.median_absolute_deviation(pts)
-        mads = 0.01
+        mads = stats.median_absolute_deviation(pts)
     for alpha in samples:
         residuals = np.abs(pts - alpha)
         inliers = np.where(residuals < mads)[0]
-        if len(inliers) < min_samp:
-            continue
-        score = np.linalg.norm(residuals[inliers])**2/len(inliers)
-        if score < score_best:
-            score_best = score
+        if len(inliers_best) < len(inliers):
             inliers_best = inliers
 
     try:
         return np.mean(pts[inliers_best]), inliers_best
     except UnboundLocalError:
         return np.mean(pts), np.arange(len(pts))
+
+
+def ransac2d(pts, min_samp=2, iter=500, thresh=None):
+    """
+    Returns the line fitting the points using a Geometric Least Square RANSAC
+
+    Parameters
+    ----------
+    pts : np.array
+        1d array of data points
+    min_samp : int (=2)
+        Minimum number of points to calculate the line from (minimum 2)
+    iter : int (=100)
+        Number of iterations to test for. If iterations exceed number of
+        possible sample combinations then all combinations are tested.
+    thresh : float (=None)
+        maximum deviation from the line to still be classed as an inlier. If
+        None, than the median_absolute_deviation is used as the threshold
+
+    Returns
+    -------
+    n : np.array(2, dtype=float)
+        The normal to the line such that pts @ n = 1
+    inliers : np.array(int)
+        Indicies of the inliers in the input points.
+    """
+    if min_samp < 2:
+        raise ValueError("Minimum of 2 points required to fit a line")
+
+    # generate samples
+    if sp.special.comb(len(pts), min_samp, exact=True) < iter:
+        samples = combinations(np.arange(len(pts)), min_samp)
+    else:
+        samples = np.random.choice(np.arange(len(pts)), (iter, min_samp))
+
+    # set thresholding function
+    if thresh is None:
+        def mads(pts): return stats.median_absolute_deviation(pts)
+    else:
+        def mads(pts): return thresh
+
+    inliers_best = []
+    for sampleind in samples:
+        sample = pts[list(sampleind)]
+        n, _, rank, s = np.linalg.lstsq(sample, np.ones(sample.shape[0]),
+                                        rcond=None)
+        residuals = np.abs(pts @ n - 1)/np.linalg.norm(n)
+
+        inliers = np.where(residuals < mads(residuals))[0]
+        if len(inliers_best) < len(inliers):
+            inliers_best = inliers
+
+    if inliers_best != []:
+        n, _, rank, s = np.linalg.lstsq(pts[inliers_best],
+                                        np.ones(len(inliers_best)), rcond=None)
+        return n, inliers_best
+    else:
+        n, _, rank, s = np.linalg.lstsq(pts, np.ones(pts.shape[0]), rcond=None)
+        return n, np.arange(len(pts))
+
 
 def _icp_correspondance(source, target_tree):
     """Picks correspondance under current transformation."""
@@ -492,6 +519,7 @@ def _icp_correspondance(source, target_tree):
         ids[i] = np.asarray(id)[0]
     return ids
 
+
 def _icp_get_inliers(xs, ts):
     """Filters points more than 2*mad from the median."""
     residuals = np.linalg.norm(xs-ts, axis=1)
@@ -499,6 +527,7 @@ def _icp_get_inliers(xs, ts):
     inliers = i_residuals[:int(0.8*len(residuals))]
     inliers = np.sort(inliers)
     return inliers
+
 
 def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
     """
@@ -685,6 +714,7 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
     final_cost = np.sum(np.abs(np.einsum('ij,ij->i', (xs-ts), ns)))/len(xs)
     return R_old, final_cost
 
+
 def fit_circle(pts):
     """
     Calculates the centre and radius of a set of points on a circle using a
@@ -708,6 +738,6 @@ def fit_circle(pts):
     lam, res, rank, s = np.linalg.lstsq(A, b, rcond=None)
     a = -lam[0]/2
     b = -lam[1]/2
-    r = (lam[0]**2 + lam[1]**2 -4*lam[2])/4
+    r = (lam[0]**2 + lam[1]**2 - 4*lam[2])/4
     r = np.sqrt(r)
-    return np.array([a,b]), r
+    return np.array([a, b]), r
