@@ -75,6 +75,8 @@ def hist_normals(normals, bin_size=0.95):
     # normalise vectors based on largest magnitude
     mags = np.max(np.linalg.norm(vec_list, axis=0))
     vec_list /= mags
+    for i in range(len(vec_list)):
+        vec_list[i] *= np.sign(vec_list[i,np.argmax(abs(vec_list[i]))])
 
     return vec_list
 

@@ -21,7 +21,6 @@ remove_planes - Removes any planes from a scene.
 import open3d as o3d
 import numpy as np
 import scipy as sp
-import matplotlib.pyplot as plt
 import utils
 
 from tqdm import tqdm
@@ -104,9 +103,8 @@ def region_grow(pcd, tol=0.95, find_planes=False):
 
     Returns
     -------
-    planes_list : list of np.array(int)
-        List of arrays containing the indicies for all points in the segement
-        from the point cloud.
+    labels : np.array(int)
+        Integer array labelling each point to a region
 
     plane_normals : np.array of np.array(float) 3-vectors
         Normals for each plane in planes list.
@@ -167,10 +165,14 @@ def region_grow(pcd, tol=0.95, find_planes=False):
             if find_planes:
                 plane_normals.append(match_normal)
 
-    if find_planes:
-        return planes_list, np.array(plane_normals)
+    labels = -np.ones(len(pcd.points), dtype=int)
+    for i in range(len(planes_list)):
+        labels[planes_list[i]] = i
 
-    return planes_list
+    if find_planes:
+        return labels, np.array(plane_normals)
+
+    return labels
 
 
 def isolate_model(pcd):
@@ -511,7 +513,7 @@ def building_align(pcd, labels, norm):
     corner = np.array([corner[0], 0, corner[1]])
 
     # ensures vectors point out from centroid of corner
-    if np.mean(hull_pts[ind1] @ n) < np.mean(hull_pts @ n):
+    if np.mean(ind1 @ n) < np.mean(hull_pts @ n):
         n *= -1
     n = np.array([n[0], 0, n[1]])
     n /= np.linalg.norm(n)

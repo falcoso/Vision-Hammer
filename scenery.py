@@ -258,8 +258,8 @@ class Model:
         self.cluster = cluster
         if ref is not None:
             self.ref = ref
-            if R is None:
-                R, rmse = corr.match_to_model(self.cluster, Model.ref_clouds[ref])
+            if R is None: # building will be very roughly aligned already
+                R, rmse = utils.icp_constrained_plane(self.cluster, Model.ref_clouds[ref])
             self.R = np.linalg.inv(R)
         else:
             if R is None:
