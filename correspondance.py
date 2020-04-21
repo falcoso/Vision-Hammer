@@ -408,7 +408,7 @@ def remove_planes(pcd, svd_ratio=20, down_sample=0.01):
     # get largest plane
     filtered_norms = np.array(filtered_norms)
     sizes = np.array([len(i) for i in filtered_planes])
-    vec_list = utils.hist_normals(np.einsum('i,ij->ij', sizes,filtered_norms))
+    vec_list = utils.hist_normals(np.einsum('i,ij->ij', sizes, filtered_norms))
 
     # find the most common plane normal direction
     floor_vec = vec_list[np.argmax(np.linalg.norm(vec_list, axis=1))]
@@ -484,10 +484,10 @@ def building_align(pcd, labels, norm):
     points = np.asarray(building.points)
 
     # use height to scale length when selecting hull points
-    height = points[:,1].max()
+    height = points[:, 1].max()
 
     # get rid of any base that might be included
-    points = points[np.where(points[:,1] > 0.2*points[:,1].max())[0]]
+    points = points[np.where(points[:, 1] > 0.2*points[:, 1].max())[0]]
     points = points[:, ::2]
     points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
 
@@ -580,7 +580,7 @@ def match_model(clusters, model_clouds):
     return result
 
 
-def match_to_model(cluster, target):
+def match_to_model(cluster, target, axes, axes2, label):
     """
     Finds the best alignment of the cluster to a possible target.
 
@@ -614,11 +614,12 @@ def match_to_model(cluster, target):
     thetas = np.linspace(0, 2*np.pi, 10)
     rmse = np.inf
     for theta in tqdm(thetas):
+        if theta == thetas[-1]:
+            continue
         R1, cost = utils.icp_constrained_plane(cluster2, target, theta=theta)
         if cost < rmse:
             rmse = cost
             R_best = R1
 
     R = R_best @ R
-    cluster2 = deepcopy(cluster)
     return R, rmse

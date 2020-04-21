@@ -76,7 +76,7 @@ def hist_normals(normals, bin_size=0.95):
     mags = np.max(np.linalg.norm(vec_list, axis=0))
     vec_list /= mags
     for i in range(len(vec_list)):
-        vec_list[i] *= np.sign(vec_list[i,np.argmax(abs(vec_list[i]))])
+        vec_list[i] *= np.sign(vec_list[i, np.argmax(abs(vec_list[i]))])
 
     return vec_list
 
@@ -306,7 +306,8 @@ def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
 
         # use only the outliers to initialise alpha
         x2s = np.delete(pts, inliers1in, 0)
-        alpha, inliers2in = ransac1d(x2s @ R @ n/np.linalg.norm(n), alpha_min_samp, alpha_iter, alpha_thresh)
+        alpha, inliers2in = ransac1d(x2s @ R @ n/np.linalg.norm(n),
+                                     alpha_min_samp, alpha_iter, alpha_thresh)
         alpha *= np.linalg.norm(n)
     else:
         top = False
@@ -318,17 +319,20 @@ def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
         # bisect points between corner
         n2 = (R @ n)/alpha
         c = np.linalg.inv(np.array([n, n2])) @ np.ones(2)
+        ind1 = []
+        ind2 = []
         bisec = R45 @ n
-        dot_match = pts @ bisec - c @ bisec
-        ind1 = np.where(dot_match > 0)[0]
-        ind2 = np.where(dot_match < 0)[0]
-        bisec = R45.T @ n
-        dot_match = pts @ bisec - c @ bisec
-        ind1b = np.where(dot_match > 0)[0]
-        ind2b = np.where(dot_match < 0)[0]
-        if abs(len(ind1)-len(ind2)) > abs(len(ind1b)-len(ind2b)):
-            ind1 = ind1b
-            ind2 = ind2b
+        for i in range(2):
+            if i != 0:
+                bisec = R45.T @ n
+
+            dot_match = pts @ bisec - c @ bisec
+            ind1.append(np.where(dot_match > 0)[0])
+            ind2.append(np.where(dot_match < 0)[0])
+
+        lengths = np.array([abs(len(ind1[i])-len(ind2[i])) for i in range(2)])
+        ind1 = ind1[np.argmin(lengths)]
+        ind2 = ind2[np.argmin(lengths)]
         x1s = pts[ind1]
         x2s = pts[ind2]
 
@@ -531,7 +535,7 @@ def _icp_get_inliers(xs, ts):
     return inliers
 
 
-def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
+def icp_constrained(source, target, theta=0, iter=50, tol=0.001):
     """
     Point to point iterative closest point, constrained to rotate about the
     y-axis.
@@ -558,6 +562,7 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
         Cost per point of the given transformation.
     """
     target_tree = o3d.geometry.KDTreeFlann(target)
+    cost = 0
 
     R_old = np.array([[np.cos(theta),  0, np.sin(theta), 0],
                       [0,              1,             0, 0],
@@ -589,7 +594,7 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
 
         R0 = (xs_r-mu_x[::2]).T @ (ts_r-mu_t[::2])
         u, s, v = np.linalg.svd(R0)
-        R0 = u @ v.T
+        R0 = u @ v
 
         R0 = np.array([[R0[0, 0], 0, R0[0, 1], 0],
                        [0,        1, 0,       0],
@@ -601,27 +606,19 @@ def icp_constrained(source, target, theta=0, iter=30, tol=0.05):
         source_c.transform(R0)
         R_old = R0 @ R_old
 
-        if abs(R0[0, 1]) < np.pi*tol:
-            break
+        p = xs-ts
+        new_cost = np.sum(p @ p.T)/len(xs)
 
-    # get final cost
-    source_c = deepcopy(source)
-    source_c.transform(R_old)
-    ids = _icp_correspondance(source_c, target_tree)
+        if i > 2:
+            if abs(cost-new_cost) < cost*tol:
+                break
 
-    # filter outliers
-    xs = np.asarray(source_c.points)
-    ts = target_points[ids]
+        cost = new_cost
 
-    inliers = _icp_get_inliers(xs, ts)
-    xs = xs[inliers]
-    ts = ts[inliers]
-
-    final_cost = np.sum(np.linalg.norm(xs-ts, axis=0)**2)/len(xs)
-    return R_old, final_cost
+    return R_old, cost
 
 
-def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
+def icp_constrained_plane(source, target, theta=0, iter=50, tol=0.005):
     """
     Point to plane iterative closest point, constrained to rotate about the
     y-axis.
@@ -637,8 +634,7 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
     iter : int
         Maximum number of iterations.
     tol : float
-        Percentage change in theta between iterations below which iteration
-        stops.
+        Minimum percentage change in cost between iterations.
 
     Returns
     -------
@@ -647,6 +643,14 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
     final_cost : float
         Cost per point of the given transformation.
     """
+    def R(theta, trans=np.zeros(3)):
+        T = np.array([[np.cos(theta),  0, np.sin(theta), 0],
+                      [0,              1,             0, 0],
+                      [-np.sin(theta), 0, np.cos(theta), 0],
+                      [0,              0,             0, 1]])
+        T[:3, -1] = trans
+        return T
+
     target_tree = o3d.geometry.KDTreeFlann(target)
 
     if not source.has_normals():
@@ -654,10 +658,9 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
     if not target.has_normals():
         target.estimate_normals()
 
-    R_old = np.array([[np.cos(theta),  0, np.sin(theta), 0],
-                      [0,              1,             0, 0],
-                      [-np.sin(theta), 0, np.cos(theta), 0],
-                      [0,              0,             0, 1]])
+    R_old = R(theta)
+    cost = 0
+
     source_c = deepcopy(source)
     source_c.transform(R_old)
     target_points = np.asarray(target.points)
@@ -687,34 +690,18 @@ def icp_constrained_plane(source, target, theta=0, iter=30, tol=0.01):
         A[:, 1:] = ns
         b = np.einsum('ij,ij->i', ts-xs, ns)
         lam, res, rank, s = np.linalg.lstsq(A, b, rcond=None)
-        R0 = np.identity(4)
-        R0[0, 2] = lam[0]
-        R0[2, 0] = -lam[0]
-        R0[:3, -1] = lam[1:]
-
+        R0 = R(lam[0], lam[1:])
         source_c.transform(R0)
         R_old = R0 @ R_old
 
-        if abs(lam[0]) < np.pi*tol and np.linalg.norm(lam[1:]) < tol:
-            break
+        new_cost = np.sum(np.abs(np.einsum('ij,ij->i', (xs-ts), ns)))/len(xs)
+        if i > 2:
+            if abs(cost-new_cost) < cost*tol:
+                break
 
-    # get final cost
-    source_c = deepcopy(source)
-    source_c.transform(R_old)
-    ids = _icp_correspondance(source_c, target_tree)
+        cost = new_cost
 
-    # filter outliers
-    xs = np.asarray(source_c.points)
-    ts = target_points[ids]
-    ns = target_norms[ids]
-
-    inliers = _icp_get_inliers(xs, ts)
-    xs = xs[inliers]
-    ts = ts[inliers]
-    ns = ns[inliers]
-
-    final_cost = np.sum(np.abs(np.einsum('ij,ij->i', (xs-ts), ns)))/len(xs)
-    return R_old, final_cost
+    return R_old, cost
 
 
 def fit_circle(pts):
