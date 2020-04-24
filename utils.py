@@ -37,6 +37,8 @@ from scipy import stats
 from copy import deepcopy
 from itertools import combinations
 
+import matplotlib.pyplot as plt
+
 
 def hist_normals(normals, bin_size=0.95):
     """
@@ -287,7 +289,7 @@ def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
     R = np.array([[0., -1.],  # 90 degree rotation matrix
                   [1., 0.]])
 
-    R45 = np.array([[1., -1.],  # 90 degree rotation matrix
+    R45 = np.array([[1., -1.],  # 45 degree rotation matrix
                     [1., 1.]])
     R45 *= 1/np.sqrt(2)
 
@@ -413,6 +415,248 @@ def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
     return n, alpha, inliers1, inliers2, cost
 
 
+def fit_corner2(pts, max_iter=50, tol=0.01, n=None, alpha=None):
+    """
+    Finds the equations of 2 perpendicular lines that fit an unlabelled set of
+    points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
+    least squares.
+
+    Parameters
+    ----------
+    pts : np.array(m,2)
+        set of m 2d points to be fit
+    max_iter : int
+        Maximum number of iterations to carry out the fitting
+    tol : float +ve < 1
+        Maximum percentage change in parameters in each loop before breaking
+        iteration early
+
+    Returns
+    -------
+    n : np.array(2)
+        2d array for vector equation
+    alpha : float
+        scalar for perpendicular line.
+    inliers1 : np.array(int)
+        Inlier points that fit to pts @ n =1
+    inliers2 : np.array(int)
+        Inlier points that fit to pts @ R @ n/alpha = 1
+    cost : float
+        Final value of the Geometric Least Squares cost function
+    """
+    # put intitial intersection at centroid
+    R = np.array([[0., -1.],  # 90 degree rotation matrix
+                  [1., 0.]])
+
+    R45 = np.array([[1., -1.],  # 45 degree rotation matrix
+                    [1., 1.]])
+    R45 *= 1/np.sqrt(2)
+
+    n_thresh = 1
+    n_min_samp = 2
+    n_iter = 1000
+    alpha_thresh = 1
+    alpha_min_samp = 3
+    alpha_iter = 500
+    d = np.zeros(2)
+    d_old = np.zeros(2)
+    n_old = np.zeros(2)
+    cost_old = np.zeros(2)
+
+    # start off by fitting RANSAC line to all points
+    n, _ = ransaceig(pts-np.mean(pts, axis=0), n_min_samp, n_iter, n_thresh)
+    d[0], _ = ransac1d(pts @ n, alpha_min_samp, alpha_iter, alpha_thresh)
+    d[1], _ = ransac1d(pts @ R @ n, alpha_min_samp, alpha_iter, alpha_thresh)
+
+    # MAIN FUNCTION LOOP
+    for i in range(max_iter):
+        # bisect points between corner
+        n2 = (R @ n)
+        c = np.linalg.inv(np.array([n, n2])) @ d
+        ind1 = []
+        ind2 = []
+        bisec = R45 @ n
+        for i in range(2):
+            if i != 0:
+                bisec = R45.T @ n
+
+            dot_match = pts @ bisec - c @ bisec
+            ind1.append(np.where(dot_match > 0)[0])
+            ind2.append(np.where(dot_match < 0)[0])
+
+        lengths = np.array([abs(len(ind1[i])-len(ind2[i])) for i in range(2)])
+        ind1 = ind1[np.argmin(lengths)]
+        ind2 = ind2[np.argmin(lengths)]
+        x1s = pts[ind1]
+        x2s = pts[ind2]
+
+        # fit n
+        xs = np.append(x1s-np.median(x1s, axis=0), (x2s-np.median(x2s, axis=0)) @ R, axis=0)
+        n, _ = ransaceig(xs, n_min_samp, n_iter, n_thresh)
+        d[0], inliers1 = ransac1d(x1s @ n, alpha_min_samp, alpha_iter, alpha_thresh)
+        d[1], inliers2 = ransac1d(x2s @ R @ n, alpha_min_samp, alpha_iter, alpha_thresh)
+
+        inliers1 = x1s[inliers1]
+        inliers2 = x2s[inliers2]
+        c1 = inliers1 @ n - d[0]
+        c2 = inliers2 @ R @ n - d[1]
+        cost = (c1.T @ c1)/len(inliers1) + (c2.T @ c2)/len(inliers2)
+
+        if abs(cost - cost_old[0]) < cost_old[0]*tol:
+            break
+        elif abs(cost - cost_old[1]) < cost_old[1]*tol:
+            if cost_old[0] < cost:
+                d = d_old
+                n = n_old
+            break
+
+        cost_old[1] = cost_old[0]
+        cost_old[0] = cost
+        d_old = d
+        n_old = n
+
+    # set up return convention
+    return_set = [(n, d, inliers1, inliers2, cost),
+                  (R @ n, d @ R, inliers2, inliers1, cost)]
+
+    n2 = (R @ n)
+    intersection = np.linalg.inv(np.array([n, n2])) @ d
+    ang = np.zeros(2)
+    mean1 = np.mean(inliers1-intersection, axis=0)
+    mean2 = np.mean(inliers2-intersection, axis=0)
+    ang[0] = np.arctan2(*mean1[::-1])
+    ang[1] = np.arctan2(*mean2[::-1])
+
+    # origin is internal to the building
+    if ang.min() > 0 or ang.max() < 0 or ang.max() - ang.min() > 1.01*np.pi/2:
+        for i in range(2):
+            if ang[i] < 0:
+                ang[i] += 2*np.pi
+
+    return return_set[np.argmin(ang)]
+
+
+def fit_corner3(pts, max_iter=50, tol=0.01, n=None, alpha=None):
+    """
+    Finds the equations of 2 perpendicular lines that fit an unlabelled set of
+    points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
+    least squares.
+
+    Parameters
+    ----------
+    pts : np.array(m,2)
+        set of m 2d points to be fit
+    max_iter : int
+        Maximum number of iterations to carry out the fitting
+    tol : float +ve < 1
+        Maximum percentage change in parameters in each loop before breaking
+        iteration early
+
+    Returns
+    -------
+    n : np.array(2)
+        2d array for vector equation
+    alpha : float
+        scalar for perpendicular line.
+    inliers1 : np.array(int)
+        Inlier points that fit to pts @ n =1
+    inliers2 : np.array(int)
+        Inlier points that fit to pts @ R @ n/alpha = 1
+    cost : float
+        Final value of the Geometric Least Squares cost function
+    """
+    # put intitial intersection at centroid
+    R = np.array([[0., -1.],  # 90 degree rotation matrix
+                  [1., 0.]])
+
+    R45 = np.array([[1., -1.],  # 45 degree rotation matrix
+                    [1., 1.]])
+    R45 *= 1/np.sqrt(2)
+
+    n_thresh = 1
+    n_min_samp = 2
+    n_iter = 1000
+    alpha_thresh = 1
+    alpha_min_samp = 3
+    alpha_iter = 500
+    d = np.zeros(2)
+    d_old = np.zeros(2)
+    n_old = np.zeros(2)
+    cost_old = np.zeros(2)
+
+    # start off by fitting RANSAC line to all points
+    n, inliers = ransaceig(pts-np.mean(pts, axis=0), n_min_samp, n_iter, n_thresh)
+    d[0], _ = ransac1d(pts @ n, alpha_min_samp, alpha_iter, alpha_thresh)
+    d[1], _ = ransac1d(pts @ R @ n, alpha_min_samp, alpha_iter, alpha_thresh)
+
+    # MAIN FUNCTION LOOP
+    for i in range(max_iter):
+        # bisect points between corner
+        n2 = (R @ n)
+        c = np.linalg.inv(np.array([n, n2])) @ d
+        ind1 = []
+        ind2 = []
+        bisec = R45 @ n
+        for i in range(2):
+            if i != 0:
+                bisec = R45.T @ n
+
+            dot_match = pts @ bisec - c @ bisec
+            ind1.append(np.where(dot_match > 0)[0])
+            ind2.append(np.where(dot_match < 0)[0])
+
+        lengths = np.array([abs(len(ind1[i])-len(ind2[i])) for i in range(2)])
+        ind1 = ind1[np.argmin(lengths)]
+        ind2 = ind2[np.argmin(lengths)]
+        x1s = pts[ind1]
+        x2s = pts[ind2]
+
+        # fit n
+        n, inliers1, inliers2 = ransaceig2(x1s, x2s @ R, n_min_samp, n_iter, n_thresh)
+        inliers1 = x1s[inliers1]
+        inliers2 = x2s[inliers2]
+
+        d[0] = np.mean(inliers1 @ n)
+        d[1] = np.mean(inliers2 @ R @ n)
+
+        c1 = inliers1 @ n - d[0]
+        c2 = inliers2 @ R @ n - d[1]
+        cost = (c1.T @ c1)/len(inliers1) + (c2.T @ c2)/len(inliers2)
+
+        if abs(cost - cost_old[0]) < cost_old[0]*tol:
+            break
+        elif abs(cost - cost_old[1]) < cost_old[1]*tol:
+            if cost_old[0] < cost:
+                d = d_old
+                n = n_old
+            break
+
+        cost_old[1] = cost_old[0]
+        cost_old[0] = cost
+        d_old = d
+        n_old = n
+
+    # set up return convention
+    return_set = [(n, d, inliers1, inliers2, cost),
+                  (R @ n, d @ R, inliers2, inliers1, cost)]
+
+    n2 = (R @ n)
+    intersection = np.linalg.inv(np.array([n, n2])) @ d
+    ang = np.zeros(2)
+    mean1 = np.mean(inliers1-intersection, axis=0)
+    mean2 = np.mean(inliers2-intersection, axis=0)
+    ang[0] = np.arctan2(*mean1[::-1])
+    ang[1] = np.arctan2(*mean2[::-1])
+
+    # origin is internal to the building
+    if ang.min() > 0 or ang.max() < 0 or ang.max() - ang.min() > 1.01*np.pi/2:
+        for i in range(2):
+            if ang[i] < 0:
+                ang[i] += 2*np.pi
+
+    return return_set[np.argmin(ang)]
+
+
 def ransac1d(pts, min_samp=1, iter=100, mads=None):
     """
     Returns the mean of the points calculated using RANSAC
@@ -517,6 +761,148 @@ def ransac2d(pts, min_samp=2, iter=500, thresh=None):
         return n, np.arange(len(pts))
 
 
+def ransaceig(pts, min_samp=2, iter=500, thresh=None):
+    """
+    Returns the line fitting the points using a Geometric Least Square RANSAC
+
+    Parameters
+    ----------
+    pts : np.array
+        1d array of data points
+    min_samp : int (=2)
+        Minimum number of points to calculate the line from (minimum 2)
+    iter : int (=100)
+        Number of iterations to test for. If iterations exceed number of
+        possible sample combinations then all combinations are tested.
+    thresh : float (=None)
+        maximum deviation from the line to still be classed as an inlier. If
+        None, than the median_absolute_deviation is used as the threshold
+
+    Returns
+    -------
+    n : np.array(2, dtype=float)
+        The normal to the line such that pts @ n = 1
+    inliers : np.array(int)
+        Indicies of the inliers in the input points.
+    """
+    if min_samp < 2:
+        raise ValueError("Minimum of 2 points required to fit a line")
+
+    # generate samples
+    if sp.special.comb(len(pts), min_samp, exact=True) < iter:
+        samples = combinations(np.arange(len(pts)), min_samp)
+    else:
+        samples = np.random.choice(np.arange(len(pts)), (iter, min_samp))
+
+    # set thresholding function
+    if thresh is None:
+        def mads(pts): return stats.median_absolute_deviation(pts)
+    else:
+        def mads(pts): return thresh
+
+    inliers_best = []
+    for sampleind in samples:
+        sample = pts[list(sampleind)]
+        sample_mean = np.mean(sample, axis=0)
+        sample -= sample_mean
+        s, w = np.linalg.eigh(sample.T @ sample)
+        n = w[:, 0]
+        residuals = np.abs((pts-sample_mean) @ n)
+
+        inliers = np.where(residuals < mads(residuals))[0]
+        if len(inliers_best) < len(inliers):
+            inliers_best = inliers
+
+    if inliers_best != []:
+        pts_in = pts[inliers_best]
+        pts_in -= np.mean(pts_in, axis=0)
+        s, w = np.linalg.eigh(pts_in.T @ pts_in)
+        n = w[:, 0]
+        return n, inliers_best
+    else:
+        pts_mean = np.mean(pts, axis=0)
+        pts_bar = pts-pts_mean
+        s, w = np.linalg.eigh(pts_bar.T @ pts_bar)
+        n = w[:, 0]
+        return n, np.arange(len(pts))
+
+def ransaceig2(x1s, x2s, min_samp=2, iter=500, thresh=None):
+    """
+    Returns the line fitting the points using a Geometric Least Square RANSAC
+
+    Parameters
+    ----------
+    pts : np.array
+        1d array of data points
+    min_samp : int (=2)
+        Minimum number of points to calculate the line from (minimum 2)
+    iter : int (=100)
+        Number of iterations to test for. If iterations exceed number of
+        possible sample combinations then all combinations are tested.
+    thresh : float (=None)
+        maximum deviation from the line to still be classed as an inlier. If
+        None, than the median_absolute_deviation is used as the threshold
+
+    Returns
+    -------
+    n : np.array(2, dtype=float)
+        The normal to the line such that pts @ n = 1
+    inliers : np.array(int)
+        Indicies of the inliers in the input points.
+    """
+    if min_samp < 2:
+        raise ValueError("Minimum of 2 points required to fit a line")
+
+    # generate samples
+    samples1 = np.random.choice(np.arange(len(x1s)), (iter, min_samp))
+    samples2 = np.random.choice(np.arange(len(x2s)), (iter, min_samp))
+
+    # set thresholding function
+    if thresh is None:
+        def mads(pts): return stats.median_absolute_deviation(pts)
+    else:
+        def mads(pts): return thresh
+
+    inliers_best1 = []
+    inliers_best2 = []
+    for sampleind1, sampleind2 in zip(samples1, samples2):
+        sample1 = x1s[list(sampleind1)]
+        sample2 = x2s[list(sampleind2)]
+        sample_mean1 = np.mean(sample1, axis=0)
+        sample_mean2 = np.mean(sample2, axis=0)
+        sample1 -= sample_mean1
+        sample2 -= sample_mean2
+
+        s, w = np.linalg.eigh(sample1.T @ sample1 + sample2.T @ sample2)
+        n = w[:, 0]
+        residuals1 = np.abs((x1s-sample_mean1) @ n)
+        residuals2 = np.abs((x2s-sample_mean2) @ n)
+
+        inliers1 = np.where(residuals1 < mads(residuals1))[0]
+        if len(inliers_best1) < len(inliers1):
+            inliers_best1 = inliers1
+
+        inliers2 = np.where(residuals2 < mads(residuals2))[0]
+        if len(inliers_best2) < len(inliers2):
+            inliers_best2 = inliers2
+
+    if inliers_best1 != [] and inliers_best2 !=[]:
+        x1s_in = x1s[inliers_best1]
+        x1s_in -= np.mean(x1s_in, axis=0)
+        x2s_in = x2s[inliers_best2]
+        x2s_in -= np.mean(x2s_in, axis=0)
+
+        s, w = np.linalg.eigh(x1s_in.T @ x1s_in + x2s_in.T @ x2s_in)
+        n = w[:, 0]
+        return n, inliers_best1, inliers_best2
+    else:
+        x1s_in = x1s - np.mean(x1s,axis=0)
+        x2s_in = x2s - np.mean(x2s,axis=0)
+        s, w = np.linalg.eigh(x1s_in.T @ x1s_in + x2s_in.T @ x2s_in)
+        n = w[:, 0]
+        return n, np.arange(len(x1s)), np.arang(len(x2s))
+
+
 def _icp_correspondance(source, target_tree):
     """Picks correspondance under current transformation."""
     ids = -np.ones(len(source.points), dtype=int)
@@ -535,7 +921,7 @@ def _icp_get_inliers(xs, ts):
     return inliers
 
 
-def icp_constrained(source, target, theta=0, iter=50, tol=0.001):
+def icp_constrained(source, target, theta=0, iter=50, tol=0.01):
     """
     Point to point iterative closest point, constrained to rotate about the
     y-axis.
@@ -618,7 +1004,7 @@ def icp_constrained(source, target, theta=0, iter=50, tol=0.001):
     return R_old, cost
 
 
-def icp_constrained_plane(source, target, theta=0, iter=50, tol=0.005):
+def icp_constrained_plane(source, target, theta=0, iter=50, tol=0.01):
     """
     Point to plane iterative closest point, constrained to rotate about the
     y-axis.
