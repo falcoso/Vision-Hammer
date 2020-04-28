@@ -397,3 +397,9 @@ Created a set of several related point clouds to try registering with open3d.
     Articles on show/hidden surface determination point at possibly useful
     methods such as ray-casting. Have found a way of getting slices of a mesh at
     different angles, and then can do more details ray casting in each slice
+
+28/04/20
+    Taken slices and worked out which are visible from the camera centre.
+    Currently it only calculates the node on the line rather than clipping the
+    line itself where the occlusion starts at the intersection between two
+    points. Results are still satisfactory with detailed enough meshes.
