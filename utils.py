@@ -612,7 +612,7 @@ def fit_corner3(pts, max_iter=50, tol=0.01, n=None, alpha=None):
         x2s = pts[ind2]
 
         # fit n
-        n, inliers1, inliers2 = ransaceig2(x1s, x2s @ R, n_min_samp, n_iter, n_thresh)
+        n, [inliers1, inliers2] = ransaceig3(x1s, x2s @ R, min_samp=n_min_samp, iter=n_iter, thresh=n_thresh)
         inliers1 = x1s[inliers1]
         inliers2 = x2s[inliers2]
 
@@ -901,6 +901,75 @@ def ransaceig2(x1s, x2s, min_samp=2, iter=500, thresh=None):
         s, w = np.linalg.eigh(x1s_in.T @ x1s_in + x2s_in.T @ x2s_in)
         n = w[:, 0]
         return n, np.arange(len(x1s)), np.arang(len(x2s))
+
+def ransaceig3(*xs, min_samp=2, iter=500, thresh=None):
+    """
+    Returns the line fitting the points using a Geometric Least Square RANSAC
+
+    Parameters
+    ----------
+    pts : np.array
+        1d array of data points
+    min_samp : int (=2)
+        Minimum number of points to calculate the line from (minimum 2)
+    iter : int (=100)
+        Number of iterations to test for. If iterations exceed number of
+        possible sample combinations then all combinations are tested.
+    thresh : float (=None)
+        maximum deviation from the line to still be classed as an inlier. If
+        None, than the median_absolute_deviation is used as the threshold
+
+    Returns
+    -------
+    n : np.array(2, dtype=float)
+        The normal to the line such that pts @ n = 1
+    inliers : np.array(int)
+        Indicies of the inliers in the input points.
+    """
+    if min_samp < 2:
+        raise ValueError("Minimum of 2 points required to fit a line")
+
+    # generate samples
+    samples=[]
+    for i in xs:
+        samples.append(np.random.choice(np.arange(len(xs)), (iter, min_samp)))
+
+    # set thresholding function
+    if thresh is None:
+        def mads(pts): return stats.median_absolute_deviation(pts)
+    else:
+        def mads(pts): return thresh
+
+    inliers_best = [[]]*len(xs)
+    for i in range(iter):
+        sample_mean = []
+        A = np.zeros((2,2))
+        for j in range(len(samples)):
+            sample = xs[j][list(samples[j][i])]
+            sample_mean.append(np.mean(sample, axis=0))
+            sample -= sample_mean[-1]
+            A += sample.T @ sample
+
+        s, w = np.linalg.eigh(A)
+        n = w[:, 0]
+
+        for j in range(len(samples)):
+            residuals = np.abs((xs[j]-sample_mean[j]) @ n)
+            inliers = np.where(residuals < mads(residuals))[0]
+            if len(inliers_best[j]) < len(inliers):
+                inliers_best[j] = deepcopy(inliers)
+
+    A = np.zeros((2,2))
+    for i in range(len(inliers_best)):
+        if inliers_best[i] == []:
+            inliers_best[i] = np.arange(len(xs[i]))
+        x_in = xs[i][inliers_best[i]]
+        x_in -= np.mean(x_in, axis=0)
+        A += x_in.T @ x_in
+
+    s, w = np.linalg.eigh(A)
+    n = w[:, 0]
+    return n, inliers_best
 
 
 def _icp_correspondance(source, target_tree):

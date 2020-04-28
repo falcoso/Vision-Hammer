@@ -365,3 +365,35 @@ Created a set of several related point clouds to try registering with open3d.
       sized number of points in each group.
     - Downsample is done BEFORE taking the convex hull to get a much better
       spread of data that is more evenly spread along the edge.
+
+26/04/20
+    Have spent the last couple of weeks putting together a first draft of the
+    final report. While writing a number of improvements were discovered when
+    generating plots:
+    - An eigenvector approach for corner fitting was finally found inspired by
+      ICP solutions that remove the mean from the data. Largely it produces the
+      same results apart from on the reference models where the lines cross the
+      origin, in such cases the results are much better.
+    - The implementations of ICP have had their exit conditions changed based
+      on a convergence in the cost function, this generally results in an
+      earlier exit and as a result faster matches.
+    - An initial look into model statistics has yielded some useful results as
+      well as a potential framework for decision making within a game based on
+      changes in potential damage.
+
+    A pause is being put on the report draft to look into LOS an silhouettes as
+    a method for reliably producing these may be found. Currently the report is
+    at 29 pages, but missing a number of figures.
+
+27/04/20
+    Outline algorithm not work anywhere near as easily as thought. Looking into
+    back-face culling and then finding all lines only on one triangle.
+
+    The process is easy to carry out but creates a number of separate lines
+    which then need to be grouped. Due to this additional step and the time
+    already spent trying to get an algorithm for outline determination working
+    the algorithm is abandonded.
+
+    Articles on show/hidden surface determination point at possibly useful
+    methods such as ray-casting. Have found a way of getting slices of a mesh at
+    different angles, and then can do more details ray casting in each slice
