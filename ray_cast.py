@@ -5,14 +5,51 @@ import matplotlib.pyplot as plt
 
 from copy import deepcopy
 
-def get_slice(mesh, norm, viewpoint=np.zeros(3)):
+
+def backface_cull(mesh, viewpoint):
     """
-    Creates a set of lines that is a slice across the give mesh
+    Removes all triangles facing away from the viewpoint.
 
     Parameters
     ----------
     mesh : o3d.geometry.TriangleMesh
-        Mesh to be slices. Should have backfaces already culled.
+        Mesh with normals.
+    viewpoint : np.array(3)
+        Viewpoint from which to determine relative triangle orientation.
+
+    Returns
+    -------
+    new_mesh : o3d.geometry.TriangleMesh
+        New mesh with backface triangles removed.
+    """
+    triangles = np.asarray(mesh.triangles)
+    vertices = np.asarray(mesh.vertices)
+    normals = np.asarray(mesh.triangle_normals)
+
+    to_remove = []
+    for i in range(len(triangles)):
+        triangle = triangles[i]
+        normal = normals[i]
+        centroid = np.mean(vertices[triangle], axis=0)
+        direction = centroid-viewpoint
+        if direction @ normal > 0:
+            to_remove.append(i)
+
+    new_mesh = deepcopy(base)
+    new_mesh.remove_triangles_by_index(np.array(to_remove, dtype=int))
+    new_mesh = new_mesh.remove_unreferenced_vertices()
+    return new_mesh
+
+
+def get_slice(mesh, norm, viewpoint=np.zeros(3)):
+    """
+    Creates a set of lines that is a slice across the give mesh. If the slicing
+    plane does not intersect with the mesh None, None is returned.
+
+    Parameters
+    ----------
+    mesh : o3d.geometry.TriangleMesh
+        Mesh to be sliced. Should have backfaces already culled.
     norm : np.array(3)
         Normal of the plane that is sliced.
     viewpoint : np.array(3)
@@ -33,12 +70,14 @@ def get_slice(mesh, norm, viewpoint=np.zeros(3)):
 
     row = []
     for triangle in triangles:
-        if np.sum(d[triangle] < plane_distance) in {1,2}:
+        if np.sum(d[triangle] < plane_distance) in {1, 2}:
             row.append(triangle)
 
     row = np.array(row)
 
     pts_ind = np.unique(row.flatten())
+    if len(row) == 0:
+        return None, None
 
     # select all vertices in original mesh to create a slice sub-mesh
     slice = mesh.select_down_sample(pts_ind)
@@ -103,6 +142,7 @@ def get_slice(mesh, norm, viewpoint=np.zeros(3)):
 
     return line_points, np.array(labels, dtype=int)
 
+
 def filter_occluded(line_points, labels):
     """
     Filters a set of planar points to those that can be seen from the origin.
@@ -164,19 +204,18 @@ def filter_occluded(line_points, labels):
         angles = np.delete(angles, to_remove, axis=0)
         labels = np.delete(labels, to_remove, axis=0)
 
-
         # update angles_mask
         new_mask = np.array([angles_section.min(), angles_section.max()])
         angles_mask = np.append(angles_mask, new_mask)
         angles_mask = angles_mask.reshape(len(angles_mask)//2, 2)
-        angles_mask = angles_mask[np.argsort(angles_mask[:,0])]
+        angles_mask = angles_mask[np.argsort(angles_mask[:, 0])]
         for i in range(len(angles_mask)-1):
-            max_val = angles_mask[i,1]
-            if max_val > angles_mask[i+1,0]:
-                angles_mask[i+1,0] = None
-                if max_val > angles_mask[i+1,1]:
-                    angles_mask[i+1,1] = max_val
-                angles_mask[i,1] = None
+            max_val = angles_mask[i, 1]
+            if max_val > angles_mask[i+1, 0]:
+                angles_mask[i+1, 0] = None
+                if max_val > angles_mask[i+1, 1]:
+                    angles_mask[i+1, 1] = max_val
+                angles_mask[i, 1] = None
 
         angles_mask = angles_mask.flatten()
         angles_mask = angles_mask[~np.isnan(angles_mask)]
@@ -187,8 +226,10 @@ def filter_occluded(line_points, labels):
     i = 0
     while i < max_label:
         if not (labels == i).any():
-            labels[labels < i] -= 1
+            labels[labels > i] -= 1
             max_label -= 1
+        else:
+            i += 1
 
     return line_points, labels, angles_mask
 
