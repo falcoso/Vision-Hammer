@@ -221,8 +221,7 @@ def align_vectors(origin, target):
                            [cross[2],  0,         -cross[0]],
                            [-cross[1], cross[0],         0]])
 
-    R = np.identity(3) + cross_skew + np.matmul(cross_skew, cross_skew) * \
-        (1-cos_ang)/(np.linalg.norm(cross)**2)
+    R = np.identity(3) + cross_skew + cross_skew @ cross_skew * 1/(1+cos_ang)
 
     T = np.identity(4)
 
@@ -256,7 +255,7 @@ def colour_labels(pcd, labels):
     return pcd
 
 
-def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
+def fit_corner(pts, scale, max_iter=50, tol=0.01, n=None, alpha=None):
     """
     Finds the equations of 2 perpendicular lines that fit an unlabelled set of
     points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
@@ -293,7 +292,7 @@ def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
                     [1., 1.]])
     R45 *= 1/np.sqrt(2)
 
-    n_thresh = 1
+    n_thresh = scale/20
     n_min_samp = 2
     n_iter = 1000
     alpha_thresh = None
@@ -383,7 +382,7 @@ def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
     # since solution is not symmetric, repeat with optimal n rotated and pick
     # best fit
     if top:
-        n_new, alpha_new, i, j, cost2 = fit_corner(pts, n=(R @ n)/alpha,
+        n_new, alpha_new, i, j, cost2 = fit_corner(pts, scale, n=(R @ n)/alpha,
                                                    alpha=np.linalg.norm(n)/alpha)
         if cost2 < cost:
             n = n_new
@@ -415,7 +414,7 @@ def fit_corner(pts, max_iter=50, tol=0.01, n=None, alpha=None):
     return n, alpha, inliers1, inliers2, cost
 
 
-def fit_corner2(pts, max_iter=50, tol=0.01, n=None, alpha=None):
+def fit_corner2(pts, scale, max_iter=50, tol=0.01, n=None, alpha=None):
     """
     Finds the equations of 2 perpendicular lines that fit an unlabelled set of
     points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
@@ -452,7 +451,7 @@ def fit_corner2(pts, max_iter=50, tol=0.01, n=None, alpha=None):
                     [1., 1.]])
     R45 *= 1/np.sqrt(2)
 
-    n_thresh = 1
+    n_thresh = scale/20
     n_min_samp = 2
     n_iter = 1000
     alpha_thresh = 1
@@ -536,7 +535,7 @@ def fit_corner2(pts, max_iter=50, tol=0.01, n=None, alpha=None):
     return return_set[np.argmin(ang)]
 
 
-def fit_corner3(pts, max_iter=50, tol=0.01, n=None, alpha=None):
+def fit_corner3(pts, scale, max_iter=50, tol=0.01, n=None, alpha=None):
     """
     Finds the equations of 2 perpendicular lines that fit an unlabelled set of
     points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
@@ -573,7 +572,7 @@ def fit_corner3(pts, max_iter=50, tol=0.01, n=None, alpha=None):
                     [1., 1.]])
     R45 *= 1/np.sqrt(2)
 
-    n_thresh = 1
+    n_thresh = scale/20
     n_min_samp = 2
     n_iter = 1000
     alpha_thresh = 1

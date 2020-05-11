@@ -392,7 +392,7 @@ Created a set of several related point clouds to try registering with open3d.
     The process is easy to carry out but creates a number of separate lines
     which then need to be grouped. Due to this additional step and the time
     already spent trying to get an algorithm for outline determination working
-    the algorithm is abandonded.
+    the algorithm is abandoned.
 
     Articles on show/hidden surface determination point at possibly useful
     methods such as ray-casting. Have found a way of getting slices of a mesh at

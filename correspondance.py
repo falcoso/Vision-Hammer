@@ -303,13 +303,13 @@ def orient_refs(pcd):
     return R
 
 
-def segment(pcd, plane_thresh=0.01, eps=3, scale=True):
+def segment(cl, plane_thresh=0.01, eps=3, scale=True):
     """
     Segments a scene of a warhammer board and classified regions of interest.
 
     Parameters
     ----------
-    pcd : open3d.geometry.PointCloud
+    cl : open3d.geometry.PointCloud
         Point Cloud to segment
     plane_thresh : float (=0.01)
         Maximum distance from the table for a point to be considered a part of
@@ -329,6 +329,7 @@ def segment(pcd, plane_thresh=0.01, eps=3, scale=True):
     Normal : numpy.array(3)
         3 dimensional unit vector for the normal of the table.
     """
+    pcd = deepcopy(cl)
     # get table plane
     Normal, plane = pcd.segment_plane(plane_thresh, 20, 100)
     Normal = Normal[:3]/np.linalg.norm(Normal[:3])
@@ -458,7 +459,7 @@ def building_align(pcd, labels, norm):
 
     """
 
-    # aign the table with horizontal
+    # align the table with horizontal
     R = utils.align_vectors(norm, np.array([0, 1, 0]))
     pcd.transform(R)
     pcd.translate(-pcd.get_center())
@@ -492,7 +493,7 @@ def building_align(pcd, labels, norm):
     points = np.concatenate((points, np.ones((points.shape[0], 1))), axis=1)
 
     # downsample top down view as compressed slice will be dense and hull sparse
-    x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points)).voxel_down_sample(25/height)
+    x = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points)).voxel_down_sample(height/25)
     points = np.asarray(x.points)
     hull = sp.spatial.ConvexHull(points[:, :2])
     hull_pts = points[hull.vertices]
@@ -507,7 +508,7 @@ def building_align(pcd, labels, norm):
     # 90 degree rotation to get second normal from original normal
     R = np.array([[0, -1],
                   [1, 0]])
-    n, alpha, ind1, ind2, cost = utils.fit_corner(hull_pts)
+    n, alpha, ind1, ind2, cost = utils.fit_corner(hull_pts, height)
     n2 = (R @ n)/alpha
     corner = np.sum(np.linalg.inv(np.array([n, n2])), axis=1)
     corner = np.array([corner[0], 0, corner[1]])
@@ -580,7 +581,7 @@ def match_model(clusters, model_clouds):
     return result
 
 
-def match_to_model(cluster, target, axes, axes2, label):
+def match_to_model(cluster, target):
     """
     Finds the best alignment of the cluster to a possible target.
 
