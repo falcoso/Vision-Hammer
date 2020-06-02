@@ -1,3 +1,19 @@
+"""
+Functions for running a Ray-casting algorithm on an arbitrary 3D mesh.
+
+Author O.G.Jones
+
+Functions
+---------
+backface_cull - Removes all triangles facing away from the viewpoint.
+
+get_slice - Creates a set of lines that is a slice across the give mesh. If the
+    slicing plane does not intersect with the mesh None, None is returned.
+
+filter_occluded - Filters a set of planar points to those that can be seen from
+    the origin.
+"""
+
 from copy import deepcopy
 import open3d as o3d
 import numpy as np

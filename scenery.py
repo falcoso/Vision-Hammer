@@ -1,3 +1,20 @@
+"""
+Combines all functions into a simple class that does all the processing to
+convert a combined warhammer point cloud into a digitally reconstructed scene.
+
+Author O.G.Jones
+
+Functions
+---------
+open_refs - Opens the reference models for generating a scene.
+
+Classes
+-------
+Scene - Representation of a simple warhammer board.
+
+Model - Stores all properties of a model recoginised in a warhammer board.
+"""
+
 import utils
 import correspondance as corr
 import copy
@@ -8,7 +25,24 @@ import matplotlib.pyplot as plt
 
 
 def open_refs(file, mesh):
-    model_titles = ["Commander"]
+    """
+    Opens the reference models for generating a scene.
+
+    Parameters
+    ----------
+    file : str
+        File title that is the same for all models (but in different folders).
+    mesh : bool
+        If True, opens the triangle mesh version of the models, otherwise it
+        opens the point clouds.
+
+    Returns
+    -------
+    models : dict
+        Description of returned object.
+
+    """
+    model_titles = ["Fireblade", "Fire Warrior", "Commander", "Broadside"]
     models = {}
     if mesh:
         io_func = o3d.io.read_triangle_mesh
@@ -273,10 +307,10 @@ class Model:
     def get_geometry(self):
         """Returns the transformed o3d.geometry of the object."""
         if self.ref is not None:
-            # if Model.ref_dict == {}:
-            #     print("Loading References Meshes...")
-            #     Model.ref_dict = open_refs("texturedMesh.obj", True)
-            geom = copy.deepcopy(Model.ref_clouds[self.ref])
+            if Model.ref_dict == {}:
+                print("Loading References Meshes...")
+                Model.ref_dict = open_refs("texturedMesh.obj", True)
+            geom = copy.deepcopy(Model.ref_dict[self.ref])
             geom.transform(self.R)
         else:
             geom = self.cluster

@@ -1,5 +1,6 @@
 """
-Utility functions for displaying, formatting and colouring point clouds
+Utility functions for displaying, formatting and colouring point clouds as well
+as common mathematical algorithms.
 
 Author O.G.Jones
 
@@ -26,6 +27,30 @@ create_origin_plane - Creates plane aligned with origin and normal in y
 fit_corner - Finds the equations of 2 perpendicular lines that fit an
     unlabelled set of points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found
     by RANSAC and least squares.
+
+fit_corner2 - Finds the equations of 2 perpendicular lines that fit an
+    unlabelled set of points such that x1^Tn=d1 & x2^TRn = d2 (but data is
+    returned as in fit_corner). Fit is found by RANSAC and least squares.
+
+ransac1d - Returns the mean of the points calculated using RANSAC.
+
+ransac2d - Returns the line fitting the points using a Geometric Least Square
+    RANSAC.
+
+ransaceig - Returns the minimum eigenvector of a set of points based on a
+    RANSAC method.
+
+ransaceig2 - Returns the minimum eigenvector of 2 sets of points at 90 degrees
+    to one another using a RANSAC method.
+
+icp_constrained - Point to point iterative closest point, constrained to rotate
+    about the y-axis.
+
+icp_constrained_plane - Point to plane iterative closest point, constrained to
+    rotate about the y-axis.
+
+fit_circle - Calculates the centre and radius of a set of points on a circle
+    using a Kasa fit.
 """
 
 import open3d as o3d
@@ -265,6 +290,8 @@ def fit_corner(pts, scale, max_iter=50, tol=0.01, n=None, alpha=None):
     ----------
     pts : np.array(m,2)
         set of m 2d points to be fit
+    scale : float
+        scaling parameter to apply to the default line thresholds in RANSAC
     max_iter : int
         Maximum number of iterations to carry out the fitting
     tol : float +ve < 1
@@ -417,13 +444,15 @@ def fit_corner(pts, scale, max_iter=50, tol=0.01, n=None, alpha=None):
 def fit_corner2(pts, scale, max_iter=50, tol=0.01, n=None, alpha=None):
     """
     Finds the equations of 2 perpendicular lines that fit an unlabelled set of
-    points such that x1^Tn=1 & x2^TRn/alpha = 1. Fit is found by RANSAC and
-    least squares.
+    points such that x1^Tn=d1 & x2^TRn = d2 (but data is returned as in
+    fit_corner). Fit is found by RANSAC and least squares.
 
     Parameters
     ----------
     pts : np.array(m,2)
         set of m 2d points to be fit
+    scale : float
+        scaling parameter to apply to the default line thresholds in RANSAC
     max_iter : int
         Maximum number of iterations to carry out the fitting
     tol : float +ve < 1
@@ -762,7 +791,7 @@ def ransac2d(pts, min_samp=2, iter=500, thresh=None):
 
 def ransaceig(pts, min_samp=2, iter=500, thresh=None):
     """
-    Returns the line fitting the points using a Geometric Least Square RANSAC
+    Returns the minimum eigenvector of a set of points based on a RANSAC method.
 
     Parameters
     ----------
@@ -780,7 +809,7 @@ def ransaceig(pts, min_samp=2, iter=500, thresh=None):
     Returns
     -------
     n : np.array(2, dtype=float)
-        The normal to the line such that pts @ n = 1
+        The minimum eigenvector of X^TX of the points.
     inliers : np.array(int)
         Indicies of the inliers in the input points.
     """
@@ -827,14 +856,18 @@ def ransaceig(pts, min_samp=2, iter=500, thresh=None):
 
 def ransaceig2(x1s, x2s, min_samp=2, iter=500, thresh=None):
     """
-    Returns the line fitting the points using a Geometric Least Square RANSAC
+    Returns the minimum eigenvector of 2 sets of points at 90 degrees to one
+    another using a RANSAC method.
 
     Parameters
     ----------
-    pts : np.array
-        1d array of data points
+    x1s : np.array
+        Set of points from one line.
+    x1s : np.array
+        Set of points from other line.
     min_samp : int (=2)
-        Minimum number of points to calculate the line from (minimum 2)
+        Minimum number of points from each set to calculate the eigenvector
+        from (minimum 2)
     iter : int (=100)
         Number of iterations to test for. If iterations exceed number of
         possible sample combinations then all combinations are tested.
@@ -845,7 +878,7 @@ def ransaceig2(x1s, x2s, min_samp=2, iter=500, thresh=None):
     Returns
     -------
     n : np.array(2, dtype=float)
-        The normal to the line such that pts @ n = 1
+        The minimum eigenvector of X^TX + X^TR^TRX of the points.
     inliers : np.array(int)
         Indicies of the inliers in the input points.
     """

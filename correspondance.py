@@ -16,6 +16,13 @@ segment - Segments a scene of a warhammer board and classified regions of
     interest.
 
 remove_planes - Removes any planes from a scene.
+
+building_align - Aligns the corner of the building with the principle axis at
+    the origin.
+
+match_model - Finds the best matching models to a set of clusters.
+
+match_to_model - Finds the best alignment of the cluster to a possible target.
 """
 
 import open3d as o3d
