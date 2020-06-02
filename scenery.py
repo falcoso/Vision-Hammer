@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 
 def open_refs(file, mesh):
-    model_titles = ["Fireblade", "Fire Warrior", "Commander", "Broadside"]
+    model_titles = ["Commander"]
     models = {}
     if mesh:
         io_func = o3d.io.read_triangle_mesh
@@ -83,7 +83,7 @@ class Scene:
     def __init__(self, cloud, build=True, align=True, seg_scale=True, seg_eps=3):
         # generate labels
         self.labels, norm = corr.segment(cloud, eps=seg_eps, scale=seg_scale)
-        self.cloud = cloud
+        self.cloud = cloud.select_down_sample(np.where(self.labels != -1)[0])
 
         # save building for quick access
         building_label = -1
@@ -267,14 +267,16 @@ class Model:
             match_best, R = corr.match_model([self.cluster], Model.ref_clouds)
             self.ref = match_best
             self.R = np.linalg.inv(R)
+            self.cluster.estimate_normals()
+            o3d.visualization.draw_geometries([self.get_geometry().paint_uniform_color([1,0,0]), self.cluster.paint_uniform_color([0,1,0])])
 
     def get_geometry(self):
         """Returns the transformed o3d.geometry of the object."""
         if self.ref is not None:
-            if Model.ref_dict == {}:
-                print("Loading References Meshes...")
-                Model.ref_dict = open_refs("texturedMesh.obj", True)
-            geom = copy.deepcopy(Model.ref_dict[self.ref])
+            # if Model.ref_dict == {}:
+            #     print("Loading References Meshes...")
+            #     Model.ref_dict = open_refs("texturedMesh.obj", True)
+            geom = copy.deepcopy(Model.ref_clouds[self.ref])
             geom.transform(self.R)
         else:
             geom = self.cluster

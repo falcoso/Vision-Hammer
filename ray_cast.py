@@ -3,6 +3,8 @@ import open3d as o3d
 import numpy as np
 import tqdm
 
+import matplotlib.pyplot as plt
+
 
 def backface_cull(mesh, viewpoint):
     """
@@ -53,8 +55,16 @@ def get_slice(mesh, norm, viewpoint=np.zeros(3)):
     labels : np.array(N) (int)
         labels grouping the points together to form connected lines
     """
+
     triangles = np.asarray(mesh.triangles)
     vertices = np.asarray(mesh.vertices)
+
+    # system basis to determine ordering
+    n1 = np.mean(vertices, axis=0) - viewpoint
+    n1 /= np.linalg.norm(n1)
+    n2 = np.cross(n1, norm)
+    n2 /= np.linalg.norm(n2)
+
     plane_distance = viewpoint @ norm
     d = vertices @ norm - plane_distance
 
@@ -113,10 +123,14 @@ def get_slice(mesh, norm, viewpoint=np.zeros(3)):
             tri_labels[tri_labels == label] = -1
             comp_labels = True
             continue
-        line = np.array(line)
 
-        # also sorts the lines
-        line = np.unique(line, axis=0)
+        line = np.unique(np.array(line), axis=0)
+        # sort along basis
+        N = np.array([n1, n2])
+        pts = (line - viewpoint) @ N.T
+        angles = np.arctan2(pts[:, 0], pts[:, 1])
+        line = line[np.argsort(angles)]
+
         labels += [label]*len(line)
         line_points = np.append(line_points, line, axis=0)
 
@@ -157,6 +171,26 @@ def filter_occluded(line_points, labels, viewpoint, norm):
     angles_mask :
 
     """
+    def find_clipped_point(pts, angles_mask):
+        angles = np.arctan2(pts[:, 0], pts[:, 1])
+        # find intersecting mask
+        for mask in angles_mask:
+            occluded = (angles < mask[1]) & (angles > mask[0])
+            if occluded[0] ^ occluded[1]:
+                break
+
+        # get the specific occlusion angle
+        angle = mask[occluded[0]]
+        n = np.array([np.sin(angle), np.cos(angle)])
+
+        d = pts[1] - pts[0]
+        d = d[::-1]
+        d[0] *= -1
+
+        alpha = pts[0] @ d / (n @ d)
+
+        return alpha*n
+
     line_points = deepcopy(line_points)
     # get basis vectors for plane.
     n1 = np.mean(line_points, axis=0) - viewpoint
@@ -164,9 +198,9 @@ def filter_occluded(line_points, labels, viewpoint, norm):
     n2 = np.cross(n1, norm)
     n2 /= np.linalg.norm(n2)
 
+    # transform points into basis
     N = np.array([n1, n2])
     pts = (line_points - viewpoint) @ N.T
-    # transform points into basis
 
     # go through each line segement starting with closest to produce angle mask
     centres = np.array([np.mean(pts[labels == i], axis=0) for i in range(labels.max()+1)])
@@ -184,18 +218,40 @@ def filter_occluded(line_points, labels, viewpoint, norm):
             occluded += (angles_section < mask[1]) & (angles_section > mask[0])
 
         # find each new section the line might be split into
-        i = 0
         sections = []
-        sec = []
-        for i in range(len(occluded)):
-            if occluded[i] == 0:
-                sec.append(i)
-            else:
-                if len(sec) != 0:
-                    sections.append(np.array(sec))
-                sec = []
-        if len(sec) != 0:
-            sections.append(np.array(sec))
+        occluded[occluded > 0] = 1
+        diff = np.diff(occluded)
+        changes = np.where(diff != 0)[0]
+
+        up = 0
+        down = 0
+        if len(changes) != 0:
+            for change in changes:
+                if diff[change] == 1:
+                    up = change
+                    sections.append(np.arange(down, up))
+                elif diff[change] == -1:
+                    down = change
+                    # new_pts =
+
+            if diff[changes][-1] == -1:
+                sections.append(np.arange(down, len(occluded)))
+        elif occluded[0] == 0:
+            sections.append(np.arange(0, len(occluded)))
+
+        # i = 0
+        # sections = []
+        # sec = []
+        # for i in range(len(occluded)):
+        #     if occluded[i] == 0:
+        #         sec.append(i)
+        #     else:
+        #         if len(sec) != 0:
+        #             # find new clipped point
+        #             sections.append(np.array(sec))
+        #         sec = []
+        # if len(sec) != 0:
+        #     sections.append(np.array(sec))
 
         indexes = np.where(labels == label)[0]
         for section in sections:
@@ -240,21 +296,22 @@ def filter_occluded(line_points, labels, viewpoint, norm):
 
 if __name__ == "__main__":
     base = o3d.io.read_triangle_mesh("Broadside_down.ply")
-    # base.translate(np.array([0, -7, -6]))
+    # base = o3d.io.read_triangle_mesh("./Point Clouds/Ref - Photogrammetry/Broadside/texturedMesh.obj")
     base = base.remove_unreferenced_vertices()
+    base.translate([-7,-5,-10])
     base.compute_vertex_normals()
     base.compute_triangle_normals()
     triangles = np.asarray(base.triangles)
     vertices = np.asarray(base.vertices)
     normals = np.asarray(base.triangle_normals)
 
-    viewpoint = np.array([0, 5, 5])
-    # viewpoint = np.array([0, 0, 0])
+    # viewpoint = np.array([7, 5, 10])
+    viewpoint = np.array([0, 0, 0])
     base = backface_cull(base, viewpoint)
     max_pt = vertices[np.argmax(vertices[:, 1])]-viewpoint
     min_pt = vertices[np.argmin(vertices[:, 1])]-viewpoint
 
-    theta = np.linspace(np.arctan2(min_pt[1], min_pt[2]), np.arctan2(max_pt[1], max_pt[2]), 200)
+    theta = np.linspace(np.arctan2(min_pt[1], np.linalg.norm(min_pt[::2])), np.arctan2(max_pt[1], np.linalg.norm(max_pt[::2])), 300)
 
     n = np.zeros((len(theta), 3))
     n[:, 2] = -np.sin(theta)
@@ -276,6 +333,37 @@ if __name__ == "__main__":
         #
         # for point in line_points:
         #     plt.plot([viewpoint[0],point[0]], [viewpoint[2],point[2]], color="C3", lw=1)
+        # plt.show()
+
+        for i in range(labels.max()+1):
+            vector = o3d.utility.Vector3dVector(line_points[labels == i])
+            size = np.sum(labels == i)
+            if size == 1:
+                continue
+            pointers = np.append(np.arange(0, size-1).reshape(1, size-1),
+                                 np.arange(1, size).reshape(1, size-1), axis=0).T
+            lines.append(o3d.geometry.LineSet(vector, o3d.utility.Vector2iVector(pointers)))
+
+    n = np.zeros((len(theta), 3))
+    n[:, 2] = -np.sin(theta)
+    n[:, 0] = np.cos(theta)
+    # n = n[95:100]
+    # n = [np.array([1,0,0])]
+    for normal in tqdm.tqdm(n):
+        line_points, labels = get_slice(base, normal, viewpoint)
+        if line_points is None:
+            continue
+
+        # for i in range(labels.max()+1):
+        #     plt.plot(line_points[labels == i, 1], line_points[labels == i, 2], color="C0")
+
+        line_points, labels, angles_mask = filter_occluded(line_points, labels, viewpoint, normal)
+
+        # for i in range(labels.max()+1):
+        #     plt.plot(line_points[labels == i, 1], line_points[labels == i, 2], color="C1")
+        #
+        # for point in line_points:
+        #     plt.plot([viewpoint[1],point[1]], [viewpoint[2],point[2]], color="C3", lw=1)
         # plt.show()
 
         for i in range(labels.max()+1):
